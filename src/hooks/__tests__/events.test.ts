@@ -220,8 +220,21 @@ describe('AfterToolCallEvent', () => {
     event.toolUse = toolUse
     // @ts-expect-error verifying that property is readonly
     event.tool = tool
-    // @ts-expect-error verifying that property is readonly
-    event.result = result
+  })
+
+  it('allows result to be replaced', () => {
+    const agent = new Agent()
+    const toolUse = { name: 'test', toolUseId: 'id', input: {} }
+    const result = new ToolResultBlock({ toolUseId: 'id', status: 'success', content: [new TextBlock('original')] })
+    const event = new AfterToolCallEvent({ agent, toolUse, tool: undefined, result })
+
+    const replacedResult = new ToolResultBlock({
+      toolUseId: 'id',
+      status: 'success',
+      content: [new TextBlock('replaced')],
+    })
+    event.result = replacedResult
+    expect(event.result).toBe(replacedResult)
   })
 
   it('creates instance with error property when tool execution fails', () => {
