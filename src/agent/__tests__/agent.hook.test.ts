@@ -550,7 +550,7 @@ describe('Agent Hooks Integration', () => {
         new ToolResultBlock({
           toolUseId: 'tool-1',
           status: 'error',
-          content: [new TextBlock('tool cancelled by hook')],
+          content: [new TextBlock('Tool cancelled by hook')],
         })
       )
     })
@@ -660,7 +660,7 @@ describe('Agent Hooks Integration', () => {
         new ToolResultBlock({
           toolUseId: 'tool-1',
           status: 'error',
-          content: [new TextBlock('tool cancelled by hook')],
+          content: [new TextBlock('Tool cancelled by hook')],
         })
       )
     })
