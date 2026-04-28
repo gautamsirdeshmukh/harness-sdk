@@ -22,14 +22,14 @@ import type { Snapshot } from '../types/snapshot.js'
 /**
  * All available fields that can be included in a snapshot.
  */
-export const ALL_SNAPSHOT_FIELDS = ['messages', 'state', 'systemPrompt'] as const
+export const ALL_SNAPSHOT_FIELDS = ['messages', 'state', 'systemPrompt', 'modelState'] as const
 
 /**
  * Strongly typed preset definitions for snapshot field selection.
  * This object allows easy evolution of presets and type-safe access.
  */
 export const SNAPSHOT_PRESETS = {
-  session: ['messages', 'state', 'systemPrompt'] as const,
+  session: ['messages', 'state', 'systemPrompt', 'modelState'] as const,
 } as const
 
 /**
@@ -104,6 +104,10 @@ export function takeSnapshot(agent: LocalAgent, options: TakeSnapshotOptions): S
     data.systemPrompt = agent.systemPrompt !== undefined ? (systemPromptToData(agent.systemPrompt) as JSONValue) : null
   }
 
+  if (fields.has('modelState')) {
+    data.modelState = serializeStateSerializable(agent.modelState)
+  }
+
   return {
     scope: 'agent',
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
@@ -153,6 +157,10 @@ export function loadSnapshot(agent: LocalAgent, snapshot: Snapshot): void {
     } else {
       delete agent.systemPrompt
     }
+  }
+
+  if ('modelState' in snapshot.data) {
+    loadStateSerializable(agent.modelState, snapshot.data.modelState)
   }
 }
 

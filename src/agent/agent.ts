@@ -29,6 +29,7 @@ import { systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError, StructuredOutputError } from '../errors.js'
 import { Model } from '../models/model.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
+import { ModelPlugin } from '../plugins/model-plugin.js'
 import { isModelStreamEvent } from '../models/streaming.js'
 import { ToolRegistry } from '../registry/tool-registry.js'
 import { StateStore } from '../state-store.js'
@@ -36,6 +37,7 @@ import { AgentPrinter, getDefaultAppender, type Printer } from './printer.js'
 import type { Plugin } from '../plugins/plugin.js'
 import { PluginRegistry } from '../plugins/registry.js'
 import { SlidingWindowConversationManager } from '../conversation-manager/sliding-window-conversation-manager.js'
+import { NullConversationManager } from '../conversation-manager/null-conversation-manager.js'
 import { ConversationManager } from '../conversation-manager/conversation-manager.js'
 import { HookRegistryImplementation } from '../hooks/registry.js'
 import type { HookableEventConstructor, HookCallback, HookCleanup } from '../hooks/types.js'
@@ -138,6 +140,11 @@ export type AgentConfig = {
   /** Optional initial state values for the agent. */
   appState?: Record<string, JSONValue>
   /**
+   * Optional initial model-provider state (e.g., restoring `responseId` from a
+   * prior session). Typically only set when hydrating from a snapshot.
+   */
+  modelState?: Record<string, JSONValue>
+  /**
    * Enable automatic printing of agent output to console.
    * When true, prints text generation, reasoning, and tool usage as they occur.
    * Defaults to true.
@@ -209,6 +216,12 @@ export class Agent implements LocalAgent, InvokableAgent {
    * State is not passed to the model during inference.
    */
   public readonly appState: StateStore
+  /**
+   * Runtime state for the model provider. Used by stateful models to persist
+   * provider-specific data (e.g., response IDs for conversation chaining)
+   * across invocations.
+   */
+  public readonly modelState: StateStore
   private readonly _conversationManager: ConversationManager
 
   /**
@@ -266,7 +279,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     // Initialize public fields
     this.messages = (config?.messages ?? []).map((msg) => (msg instanceof Message ? msg : Message.fromMessageData(msg)))
     this.appState = new StateStore(config?.appState)
-    this._conversationManager = config?.conversationManager ?? new SlidingWindowConversationManager({ windowSize: 40 })
+    this.modelState = new StateStore(config?.modelState)
     this.name = config?.name ?? DEFAULT_AGENT_NAME
     this.id = config?.id ?? DEFAULT_AGENT_ID
     if (config?.description !== undefined) this.description = config.description
@@ -278,6 +291,19 @@ export class Agent implements LocalAgent, InvokableAgent {
       this.model = config?.model ?? new BedrockModel()
     }
 
+    // Validate and assign conversation manager
+    if (this.model.stateful) {
+      if (config?.conversationManager) {
+        throw new Error(
+          'Cannot use a conversationManager with a stateful model. The model manages conversation state server-side.'
+        )
+      }
+      this._conversationManager = new NullConversationManager()
+    } else {
+      this._conversationManager =
+        config?.conversationManager ?? new SlidingWindowConversationManager({ windowSize: 40 })
+    }
+
     const { tools, mcpClients } = flattenTools(config?.tools ?? [])
     this._toolRegistry = new ToolRegistry(tools)
     this._mcpClients = mcpClients
@@ -286,10 +312,13 @@ export class Agent implements LocalAgent, InvokableAgent {
     this._hooksRegistry = new HookRegistryImplementation()
 
     // Initialize plugin registry with all plugins to be initialized during initialize()
+    // ModelPlugin is registered last so that on AfterInvocationEvent (which uses reverse
+    // callback ordering), it runs first — clearing messages before SessionManager saves.
     this._pluginRegistry = new PluginRegistry([
       this._conversationManager,
       ...(config?.plugins ?? []),
       ...(config?.sessionManager ? [config.sessionManager] : []),
+      new ModelPlugin(this.model),
     ])
 
     if (config?.systemPrompt !== undefined) {
@@ -941,7 +970,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     toolChoice?: ToolChoice
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
-    const streamOptions: StreamOptions = { toolSpecs }
+    const streamOptions: StreamOptions = { toolSpecs, modelState: this.modelState }
     if (this.systemPrompt !== undefined) {
       streamOptions.systemPrompt = this.systemPrompt
     }

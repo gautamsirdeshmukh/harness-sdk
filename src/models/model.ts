@@ -11,6 +11,7 @@ import {
 } from '../types/messages.js'
 import { CitationsBlock } from '../types/citations.js'
 import type { Citation, CitationGeneratedContent } from '../types/citations.js'
+import type { StateStore } from '../state-store.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -120,6 +121,14 @@ export interface StreamOptions {
    * Controls how the model selects tools to use.
    */
   toolChoice?: ToolChoice
+
+  /**
+   * Runtime state for model providers that manage server-side conversation state.
+   * The model can read and write this state during streaming (e.g., to store a
+   * response ID for conversation chaining). Mutations via `set`/`delete` are
+   * visible to the caller after the stream completes.
+   */
+  modelState?: StateStore
 }
 
 /**
@@ -195,6 +204,22 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   get modelId(): string | undefined {
     return this.getConfig().modelId
+  }
+
+  /**
+   * Whether this model manages conversation state server-side.
+   *
+   * When `true`, the server tracks conversation context across turns, so the SDK
+   * sends only the latest message instead of the full history. After each invocation,
+   * the agent's local message history is cleared automatically.
+   *
+   * Model providers that support server-side state management should override this
+   * to return `true`.
+   *
+   * @returns `false` by default
+   */
+  get stateful(): boolean {
+    return false
   }
 
   /**

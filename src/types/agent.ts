@@ -183,6 +183,13 @@ export interface LocalAgent {
   messages: Message[]
 
   /**
+   * Runtime state for the model provider. Used by stateful models to persist
+   * provider-specific data (e.g., response IDs for server-side conversation chaining)
+   * across invocations.
+   */
+  modelState: StateStore
+
+  /**
    * The tool registry for registering tools with the agent.
    */
   readonly toolRegistry: ToolRegistry
