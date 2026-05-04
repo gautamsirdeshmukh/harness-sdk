@@ -4,6 +4,8 @@ import { type Tool, ToolStreamEvent } from '../tools/tool.js'
 import type { JSONValue } from '../types/json.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import type { Model } from '../models/model.js'
+import { interruptFromAgent, type Interruptible } from '../interrupt.js'
+import type { InterruptParams } from '../types/interrupt.js'
 
 /**
  * Agent hook events.
@@ -239,7 +241,7 @@ export class MessageAddedEvent extends HookableEvent {
  *   If `name` is changed and `selectedTool` is not set, the tool is re-resolved from
  *   the registry under the new name.
  */
-export class BeforeToolCallEvent extends HookableEvent {
+export class BeforeToolCallEvent extends HookableEvent implements Interruptible {
   readonly type = 'beforeToolCallEvent' as const
   readonly agent: LocalAgent
   toolUse: ToolUseData
@@ -275,6 +277,18 @@ export class BeforeToolCallEvent extends HookableEvent {
     this.toolUse = data.toolUse
     this.tool = data.tool
     this.invocationState = data.invocationState
+  }
+
+  /**
+   * Raises an interrupt for human-in-the-loop workflows.
+   * If a response is available (from a previous resume), returns it immediately.
+   * Otherwise, throws an InterruptError to halt agent execution.
+   *
+   * @param params - Interrupt parameters including name and optional reason
+   * @returns The user's response when resuming from an interrupt
+   */
+  interrupt<T = JSONValue>(params: InterruptParams): T {
+    return interruptFromAgent<T>(this.agent, `hook:beforeToolCall:${this.toolUse.toolUseId}:${params.name}`, params)
   }
 
   /**
@@ -671,7 +685,7 @@ export class AgentResultEvent extends HookableEvent {
  * Fired when the model returns tool use blocks that need to be executed.
  * Hook callbacks can set {@link cancel} to prevent all tools from executing.
  */
-export class BeforeToolsEvent extends HookableEvent {
+export class BeforeToolsEvent extends HookableEvent implements Interruptible {
   readonly type = 'beforeToolsEvent' as const
   readonly agent: LocalAgent
   readonly message: Message
@@ -689,6 +703,18 @@ export class BeforeToolsEvent extends HookableEvent {
     this.agent = data.agent
     this.message = data.message
     this.invocationState = data.invocationState
+  }
+
+  /**
+   * Raises an interrupt for human-in-the-loop workflows.
+   * If a response is available (from a previous resume), returns it immediately.
+   * Otherwise, throws an InterruptError to halt agent execution.
+   *
+   * @param params - Interrupt parameters including name and optional reason
+   * @returns The user's response when resuming from an interrupt
+   */
+  interrupt<T = JSONValue>(params: InterruptParams): T {
+    return interruptFromAgent<T>(this.agent, `hook:beforeTools:${params.name}`, params)
   }
 
   /**

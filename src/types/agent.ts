@@ -1,5 +1,7 @@
 import type { StateStore } from '../state-store.js'
 import type { ContentBlock, ContentBlockData, Message, MessageData, StopReason, SystemPrompt } from './messages.js'
+import type { Interrupt } from '../interrupt.js'
+import type { InterruptResponseContent, InterruptResponseContentData } from './interrupt.js'
 import type { AgentTrace } from '../telemetry/tracer.js'
 import type {
   BeforeInvocationEvent,
@@ -33,8 +35,16 @@ import { AgentMetrics } from '../telemetry/meter.js'
  * - `string` - User text input (wrapped in TextBlock, creates user Message)
  * - `ContentBlock[]` | `ContentBlockData[]` - Array of content blocks (creates single user Message)
  * - `Message[]` | `MessageData[]` - Array of messages (appends all to conversation)
+ * - `InterruptResponseContent[]` - Array of interrupt responses (resumes from interrupted state)
  */
-export type InvokeArgs = string | ContentBlock[] | ContentBlockData[] | Message[] | MessageData[]
+export type InvokeArgs =
+  | string
+  | ContentBlock[]
+  | ContentBlockData[]
+  | Message[]
+  | MessageData[]
+  | InterruptResponseContent[]
+  | InterruptResponseContentData[]
 
 /**
  * Per-invocation state threaded through hooks and tools for a single agent
@@ -292,6 +302,12 @@ export class AgentResult {
    */
   readonly invocationState: InvocationState
 
+  /**
+   * Interrupts that caused the agent to stop, when `stopReason` is `'interrupt'`.
+   * Contains the unanswered interrupts that require human input to resume.
+   */
+  readonly interrupts?: Interrupt[]
+
   constructor(data: {
     stopReason: StopReason
     lastMessage: Message
@@ -299,6 +315,7 @@ export class AgentResult {
     traces?: AgentTrace[]
     metrics?: AgentMetrics
     structuredOutput?: z.output<z.ZodType>
+    interrupts?: Interrupt[]
   }) {
     this.stopReason = data.stopReason
     this.lastMessage = data.lastMessage
@@ -311,6 +328,9 @@ export class AgentResult {
     }
     if (data.structuredOutput !== undefined) {
       this.structuredOutput = data.structuredOutput
+    }
+    if (data.interrupts !== undefined) {
+      this.interrupts = data.interrupts
     }
   }
 
