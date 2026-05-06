@@ -3,6 +3,7 @@ import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { MockSnapshotStorage } from '../../__fixtures__/mock-storage-provider.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
+import { createCancellableAgent } from '../../__fixtures__/agent-helpers.js'
 import { AfterNodeCallEvent, BeforeNodeCallEvent, MultiAgentInitializedEvent } from '../events.js'
 import { TextBlock, type ContentBlockData } from '../../types/messages.js'
 import { Status, MultiAgentState } from '../state.js'
@@ -168,6 +169,39 @@ describe('Graph', () => {
             maxConcurrency: 0,
           })
       ).toThrow('max_concurrency=<0> | must be at least 1')
+    })
+
+    it('defaults maxConcurrency, maxSteps, timeout, and nodeTimeout to Infinity', () => {
+      const graph = new Graph({
+        nodes: [makeAgent('a')],
+        edges: [],
+      })
+      expect(graph.config.maxConcurrency).toBe(Infinity)
+      expect(graph.config.maxSteps).toBe(Infinity)
+      expect(graph.config.timeout).toBe(Infinity)
+      expect(graph.config.nodeTimeout).toBe(Infinity)
+    })
+
+    it('throws when timeout < 1', () => {
+      expect(
+        () =>
+          new Graph({
+            nodes: [makeAgent('a')],
+            edges: [],
+            timeout: 0,
+          })
+      ).toThrow('timeout=<0> | must be at least 1')
+    })
+
+    it('throws when nodeTimeout < 1', () => {
+      expect(
+        () =>
+          new Graph({
+            nodes: [makeAgent('a')],
+            edges: [],
+            nodeTimeout: 0,
+          })
+      ).toThrow('node_timeout=<0> | must be at least 1')
     })
   })
 
@@ -409,6 +443,60 @@ describe('Graph', () => {
       })
 
       await expect(graph.invoke('go')).rejects.toThrow('max steps reached')
+    })
+
+    it('throws when a node exceeds nodeTimeout', async () => {
+      const graph = new Graph({
+        nodes: [{ agent: createCancellableAgent('slow', 100) }],
+        edges: [],
+        nodeTimeout: 20,
+      })
+
+      await expect(graph.invoke('go')).rejects.toThrow(/node_timeout=<20>, node_id=<slow>/)
+    })
+
+    it('applies per-node timeout over nodeTimeout', async () => {
+      const graph = new Graph({
+        nodes: [{ agent: createCancellableAgent('slow', 100), timeout: 15 }],
+        edges: [],
+        nodeTimeout: 10_000,
+      })
+
+      await expect(graph.invoke('go')).rejects.toThrow(/node_timeout=<15>, node_id=<slow>/)
+    })
+
+    it('does not throw when nodeTimeout is Infinity', async () => {
+      const graph = new Graph({
+        nodes: [{ agent: createCancellableAgent('a', 20) }],
+        edges: [],
+        nodeTimeout: Infinity,
+      })
+
+      const result = await graph.invoke('go')
+      expect(result.results).toHaveLength(1)
+      expect(result.results[0]?.status).toBe(Status.COMPLETED)
+    })
+
+    it('per-node timeout of Infinity disables a finite nodeTimeout', async () => {
+      const graph = new Graph({
+        nodes: [{ agent: createCancellableAgent('slow', 30), timeout: Infinity }],
+        edges: [],
+        nodeTimeout: 10,
+      })
+
+      const result = await graph.invoke('go')
+      expect(result.results).toHaveLength(1)
+      expect(result.results[0]?.status).toBe(Status.COMPLETED)
+    })
+
+    it('throws when timeout is exceeded', async () => {
+      const graph = new Graph({
+        nodes: [{ agent: createCancellableAgent('a', 30) }, { agent: createCancellableAgent('b', 30) }],
+        edges: [['a', 'b']],
+        timeout: 20,
+      })
+
+      await expect(graph.invoke('go')).rejects.toThrow(/timeout=<20>/)
     })
 
     it('calls initialize only once across invocations', async () => {

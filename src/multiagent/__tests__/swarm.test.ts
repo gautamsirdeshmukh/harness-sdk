@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
+import { createCancellableAgent } from '../../__fixtures__/agent-helpers.js'
 import { BeforeNodeCallEvent, MultiAgentInitializedEvent } from '../events.js'
 import type { JSONValue } from '../../types/json.js'
 import { TextBlock } from '../../types/messages.js'
@@ -105,6 +106,38 @@ describe('Swarm', () => {
             maxSteps: 0,
           })
       ).toThrow('max_steps=<0> | must be at least 1')
+    })
+
+    it('defaults maxSteps, timeout, and nodeTimeout to Infinity', () => {
+      const swarm = new Swarm({
+        nodes: [createFinalAgent('a', 'hi')],
+        start: 'a',
+      })
+      expect(swarm.config.maxSteps).toBe(Infinity)
+      expect(swarm.config.timeout).toBe(Infinity)
+      expect(swarm.config.nodeTimeout).toBe(Infinity)
+    })
+
+    it('throws when timeout < 1', () => {
+      expect(
+        () =>
+          new Swarm({
+            nodes: [createFinalAgent('a', 'hi')],
+            start: 'a',
+            timeout: 0,
+          })
+      ).toThrow('timeout=<0> | must be at least 1')
+    })
+
+    it('throws when nodeTimeout < 1', () => {
+      expect(
+        () =>
+          new Swarm({
+            nodes: [createFinalAgent('a', 'hi')],
+            start: 'a',
+            nodeTimeout: 0,
+          })
+      ).toThrow('node_timeout=<0> | must be at least 1')
     })
   })
 
@@ -223,6 +256,71 @@ describe('Swarm', () => {
 
       expect(result.status).toBe(Status.COMPLETED)
       expect(result.results.map((r) => r.nodeId)).toStrictEqual(['a', 'b'])
+    })
+
+    it('throws when a node exceeds nodeTimeout', async () => {
+      const swarm = new Swarm({
+        nodes: [{ agent: createCancellableAgent('slow', 100) }],
+        start: 'slow',
+        nodeTimeout: 20,
+      })
+
+      await expect(swarm.invoke('go')).rejects.toThrow(/node_timeout=<20>, node_id=<slow>/)
+    })
+
+    it('applies per-node timeout over nodeTimeout', async () => {
+      const swarm = new Swarm({
+        nodes: [{ agent: createCancellableAgent('slow', 100), timeout: 15 }],
+        start: 'slow',
+        nodeTimeout: 10_000,
+      })
+
+      await expect(swarm.invoke('go')).rejects.toThrow(/node_timeout=<15>, node_id=<slow>/)
+    })
+
+    it('does not throw when nodeTimeout is Infinity', async () => {
+      const swarm = new Swarm({
+        nodes: [{ agent: createCancellableAgent('a', 20) }],
+        start: 'a',
+        nodeTimeout: Infinity,
+      })
+
+      const result = await swarm.invoke('go')
+      expect(result.status).toBe(Status.COMPLETED)
+    })
+
+    it('per-node timeout of Infinity disables a finite nodeTimeout', async () => {
+      const swarm = new Swarm({
+        nodes: [{ agent: createCancellableAgent('slow', 30), timeout: Infinity }],
+        start: 'slow',
+        nodeTimeout: 10,
+      })
+
+      const result = await swarm.invoke('go')
+      expect(result.status).toBe(Status.COMPLETED)
+    })
+
+    it('throws when timeout is exceeded between steps', async () => {
+      const swarm = new Swarm({
+        nodes: [
+          { agent: createCancellableAgent('a', 30, { agentId: 'b', message: 'to b' }) },
+          { agent: createCancellableAgent('b', 30) },
+        ],
+        start: 'a',
+        timeout: 20,
+      })
+
+      await expect(swarm.invoke('go')).rejects.toThrow(/timeout=<20>/)
+    })
+
+    it('aborts an in-flight node when the swarm timeout expires mid-step', async () => {
+      const swarm = new Swarm({
+        nodes: [{ agent: createCancellableAgent('slow', 200) }],
+        start: 'slow',
+        timeout: 20,
+      })
+
+      await expect(swarm.invoke('go')).rejects.toThrow(/timeout=<20>/)
     })
 
     it('returns cancelled result with custom message when cancel is a string', async () => {
