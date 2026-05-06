@@ -737,6 +737,20 @@ export class AfterToolsEvent extends HookableEvent {
   readonly message: Message
   readonly invocationState: InvocationState
 
+  /**
+   * When set to `true`, the agent loop halts after this tool batch completes
+   * without calling the model again and a default message
+   * (`"Turn ended early by hook after tool execution"`) is appended as the
+   * final assistant message. When set to a string, that string is used instead
+   * of the default — the string becomes literal assistant content (a
+   * `TextBlock`), not a reason or label. Contrast with
+   * {@link BeforeToolCallEvent.cancel | cancel} fields on other events, where
+   * the string is a cancellation reason.
+   *
+   * In both cases `stopReason` on the returned `AgentResult` is `'endTurn'`.
+   */
+  endTurn: boolean | string = false
+
   constructor(data: { agent: LocalAgent; message: Message; invocationState: InvocationState }) {
     super()
     this.agent = data.agent
@@ -749,7 +763,8 @@ export class AfterToolsEvent extends HookableEvent {
   }
 
   /**
-   * Serializes for wire transport, excluding the agent reference and invocationState.
+   * Serializes for wire transport, excluding the agent reference, invocationState,
+   * and mutable endTurn field.
    * Called automatically by JSON.stringify().
    */
   toJSON(): Pick<AfterToolsEvent, 'type' | 'message'> {
