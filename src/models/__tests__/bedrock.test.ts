@@ -4168,6 +4168,7 @@ describe('BedrockModel', () => {
 
     beforeEach(() => {
       vi.clearAllMocks()
+      BedrockModel.clearCountTokensCache()
     })
 
     it('should return native token count on success', async () => {
@@ -4273,6 +4274,39 @@ describe('BedrockModel', () => {
 
       expect(typeof result).toBe('number')
       expect(result).toBeGreaterThanOrEqual(0)
+    })
+
+    it('should cache model ID and skip API call when model does not support counting tokens', async () => {
+      const unsupportedError = new Error("The provided model doesn't support counting tokens")
+      unsupportedError.name = 'ValidationException'
+      const mockSend = vi.fn(async () => {
+        throw unsupportedError
+      })
+      mockBedrockClientImplementation({ send: mockSend })
+      const model = new BedrockModel()
+
+      // First call: hits API, gets error, caches
+      await model.countTokens(messages)
+      expect(mockSend).toHaveBeenCalledOnce()
+
+      // Second call: skips API entirely
+      await model.countTokens(messages)
+      expect(mockSend).toHaveBeenCalledOnce()
+    })
+
+    it('should not cache model ID for other errors', async () => {
+      const mockSend = vi.fn(async () => {
+        throw new Error('Transient network error')
+      })
+      mockBedrockClientImplementation({ send: mockSend })
+      const model = new BedrockModel()
+
+      await model.countTokens(messages)
+      expect(mockSend).toHaveBeenCalledTimes(1)
+
+      // Second call should still attempt the API
+      await model.countTokens(messages)
+      expect(mockSend).toHaveBeenCalledTimes(2)
     })
   })
 })

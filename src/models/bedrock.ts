@@ -97,6 +97,12 @@ const BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
 ]
 
 /**
+ * Cache of model IDs that do not support the CountTokens API.
+ * Prevents repeated failing API calls for models that will never support token counting.
+ */
+const UNSUPPORTED_COUNT_TOKENS_MODELS = new Set<string>()
+
+/**
  * Mapping of Bedrock stop reasons to SDK stop reasons.
  */
 const STOP_REASON_MAP = {
@@ -334,6 +340,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   private _client: BedrockRuntimeClient
 
   /**
+   * Clears the cache of model IDs that do not support the CountTokens API.
+   * After calling this, the next countTokens invocation will attempt the API again.
+   *
+   * @internal
+   */
+  static clearCountTokensCache(): void {
+    UNSUPPORTED_COUNT_TOKENS_MODELS.clear()
+  }
+
+  /**
    * Creates a new BedrockModel instance.
    *
    * @param options - Optional configuration for model and client
@@ -485,6 +501,12 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns Total input token count
    */
   override async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
+
+    if (UNSUPPORTED_COUNT_TOKENS_MODELS.has(modelId)) {
+      return super.countTokens(messages, options)
+    }
+
     try {
       const request = this._formatRequest(messages, options)
       const converseInput: Record<string, unknown> = {}
@@ -506,7 +528,18 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       logger.debug(`total_tokens=<${response.inputTokens}> | native token count`)
       return response.inputTokens
     } catch (error) {
-      logger.debug(`error=<${error}> | native token counting failed, falling back to estimation`)
+      if (
+        error instanceof Error &&
+        error.name === 'ValidationException' &&
+        error.message.includes("doesn't support counting tokens")
+      ) {
+        logger.debug(
+          `model_id=<${modelId}> | model does not support CountTokens, caching for future calls, falling back to estimation`
+        )
+        UNSUPPORTED_COUNT_TOKENS_MODELS.add(modelId)
+      } else {
+        logger.debug(`error=<${error}> | native token counting failed, falling back to estimation`)
+      }
       return super.countTokens(messages, options)
     }
   }
