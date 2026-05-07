@@ -1,11 +1,36 @@
 import { describe, expect, it } from 'vitest'
 import { FunctionTool } from '../function-tool.js'
-import { Tool, ToolStreamEvent } from '../tool.js'
+import { Tool, ToolStreamEvent, isValidToolName } from '../tool.js'
 import type { ToolContext } from '../tool.js'
 import type { JSONValue } from '../../types/json.js'
 import { createMockContext } from '../../__fixtures__/tool-helpers.js'
 
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
+
+describe('isValidToolName', () => {
+  it.each([
+    ['simple', true],
+    ['with_underscore', true],
+    ['with-hyphen', true],
+    ['Mixed-Case_123', true],
+    ['a', true],
+    ['a'.repeat(64), true],
+  ])('accepts %s', (name, expected) => {
+    expect(isValidToolName(name)).toBe(expected)
+  })
+
+  it.each([
+    ['', 'empty string'],
+    ['a'.repeat(65), 'over 64 chars'],
+    ['has space', 'space'],
+    ['has.dot', 'dot'],
+    ['has/slash', 'slash'],
+    ['has:colon', 'colon'],
+    ['emoji🚀', 'non-ascii'],
+  ])('rejects %s (%s)', (name) => {
+    expect(isValidToolName(name)).toBe(false)
+  })
+})
 
 describe('FunctionTool', () => {
   describe('properties', () => {

@@ -1742,3 +1742,117 @@ describe('_estimateInputTokens', () => {
     expect(await tokenPromise).toBe(265)
   })
 })
+
+describe('normalizeToolUseNames', () => {
+  it('replaces invalid tool-use names with INVALID_TOOL_NAME before calling model', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+    const streamSpy = vi.spyOn(model, 'stream')
+
+    const agent = new Agent({
+      model,
+      printer: false,
+      messages: [
+        new Message({ role: 'user', content: [new TextBlock('do thing')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ name: 'bad name!', toolUseId: 'tu-1', input: {} })],
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu-1',
+              status: 'success',
+              content: [new TextBlock('result')],
+            }),
+          ],
+        }),
+      ],
+    })
+
+    await agent.invoke('continue')
+
+    const sentMessages = streamSpy.mock.calls[0]?.[0] as Message[]
+    const sentToolUse = sentMessages
+      .find((m) => m.role === 'assistant')!
+      .content.find((b) => b.type === 'toolUseBlock') as ToolUseBlock
+    expect(sentToolUse).toStrictEqual(new ToolUseBlock({ name: 'INVALID_TOOL_NAME', toolUseId: 'tu-1', input: {} }))
+
+    // Agent's stored history is not mutated.
+    const storedToolUse = agent.messages
+      .find((m) => m.role === 'assistant')!
+      .content.find((b) => b.type === 'toolUseBlock') as ToolUseBlock
+    expect(storedToolUse).toStrictEqual(new ToolUseBlock({ name: 'bad name!', toolUseId: 'tu-1', input: {} }))
+  })
+
+  it('preserves reasoningSignature on replaced tool-use blocks', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+    const streamSpy = vi.spyOn(model, 'stream')
+
+    const agent = new Agent({
+      model,
+      printer: false,
+      messages: [
+        new Message({ role: 'user', content: [new TextBlock('do thing')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ name: 'bad!', toolUseId: 'tu-1', input: {}, reasoningSignature: 'sig-abc' })],
+        }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('ok')] })],
+        }),
+      ],
+    })
+
+    await agent.invoke('continue')
+
+    const sentMessages = streamSpy.mock.calls[0]?.[0] as Message[]
+    const sentToolUse = sentMessages
+      .find((m) => m.role === 'assistant')!
+      .content.find((b) => b.type === 'toolUseBlock') as ToolUseBlock
+    expect(sentToolUse).toStrictEqual(
+      new ToolUseBlock({
+        name: 'INVALID_TOOL_NAME',
+        toolUseId: 'tu-1',
+        input: {},
+        reasoningSignature: 'sig-abc',
+      })
+    )
+  })
+
+  it('leaves valid names untouched', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+    const streamSpy = vi.spyOn(model, 'stream')
+
+    const agent = new Agent({
+      model,
+      printer: false,
+      messages: [
+        new Message({ role: 'user', content: [new TextBlock('do thing')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ name: 'good_tool-1', toolUseId: 'tu-1', input: {} })],
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu-1',
+              status: 'success',
+              content: [new TextBlock('result')],
+            }),
+          ],
+        }),
+      ],
+    })
+
+    await agent.invoke('continue')
+
+    const sentMessages = streamSpy.mock.calls[0]?.[0] as Message[]
+    const sentToolUse = sentMessages
+      .find((m) => m.role === 'assistant')!
+      .content.find((b) => b.type === 'toolUseBlock') as ToolUseBlock
+    expect(sentToolUse).toStrictEqual(new ToolUseBlock({ name: 'good_tool-1', toolUseId: 'tu-1', input: {} }))
+  })
+})

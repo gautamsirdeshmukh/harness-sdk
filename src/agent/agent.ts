@@ -24,7 +24,7 @@ import {
 } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp.js'
-import { type Tool, type ToolContext } from '../tools/tool.js'
+import { isValidToolName, type Tool, type ToolContext } from '../tools/tool.js'
 import type { ToolChoice } from '../tools/types.js'
 import { systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError, StructuredOutputError } from '../errors.js'
@@ -1304,6 +1304,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     streamOptions: StreamOptions,
     invocationState: InvocationState
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
+    messages = normalizeToolUseNames(messages)
     const streamGenerator = this.model.streamAggregated(messages, streamOptions)
     let result = await streamGenerator.next()
 
@@ -1939,6 +1940,44 @@ export class Agent implements LocalAgent, InvokableAgent {
     this.messages.push(message)
     return new MessageAddedEvent({ agent: this, message, invocationState })
   }
+}
+
+const INVALID_TOOL_NAME_PLACEHOLDER = 'INVALID_TOOL_NAME'
+
+/**
+ * Replaces invalid tool-use names on assistant messages with `INVALID_TOOL_NAME`
+ * so providers that reject malformed names don't fail the whole request.
+ * Returns the input unchanged (same reference) when nothing needs replacing.
+ */
+function normalizeToolUseNames(messages: Message[]): Message[] {
+  let replaced = false
+  const next = messages.map((message) => {
+    if (!message || message.role !== 'assistant') return message
+
+    let messageReplaced = false
+    const content = message.content.map((block) => {
+      if (block.type !== 'toolUseBlock') return block
+      if (isValidToolName(block.name)) return block
+      messageReplaced = true
+      logger.debug(`tool_name=<${block.name}> | replacing invalid tool name with ${INVALID_TOOL_NAME_PLACEHOLDER}`)
+      return new ToolUseBlock({
+        name: INVALID_TOOL_NAME_PLACEHOLDER,
+        toolUseId: block.toolUseId,
+        input: block.input,
+        ...(block.reasoningSignature !== undefined && { reasoningSignature: block.reasoningSignature }),
+      })
+    })
+
+    if (!messageReplaced) return message
+    replaced = true
+    return new Message({
+      role: message.role,
+      content,
+      ...(message.metadata !== undefined && { metadata: message.metadata }),
+    })
+  })
+
+  return replaced ? next : messages
 }
 
 /**
