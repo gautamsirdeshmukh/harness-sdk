@@ -456,12 +456,19 @@ describe('AfterModelCallEvent', () => {
     const message = new Message({ role: 'assistant', content: [new TextBlock('Response')] })
     const stopReason = 'endTurn'
     const response = { message, stopReason }
-    const event = new AfterModelCallEvent({ agent, model: agent.model, stopData: response, invocationState: {} })
+    const event = new AfterModelCallEvent({
+      agent,
+      model: agent.model,
+      attemptCount: 1,
+      stopData: response,
+      invocationState: {},
+    })
 
     expect(event).toEqual({
       type: 'afterModelCallEvent',
       agent: agent,
       model: agent.model,
+      attemptCount: 1,
       stopData: response,
       error: undefined,
       invocationState: {},
@@ -477,12 +484,20 @@ describe('AfterModelCallEvent', () => {
     const message = new Message({ role: 'assistant', content: [] })
     const error = new Error('Model failed')
     const response = { message, stopReason: 'error' }
-    const event = new AfterModelCallEvent({ agent, model: agent.model, stopData: response, error, invocationState: {} })
+    const event = new AfterModelCallEvent({
+      agent,
+      model: agent.model,
+      attemptCount: 1,
+      stopData: response,
+      error,
+      invocationState: {},
+    })
 
     expect(event).toEqual({
       type: 'afterModelCallEvent',
       agent: agent,
       model: agent.model,
+      attemptCount: 1,
       stopData: response,
       error: error,
       invocationState: {},
@@ -493,14 +508,20 @@ describe('AfterModelCallEvent', () => {
     const agent = new Agent()
     const message = new Message({ role: 'assistant', content: [] })
     const response = { message, stopReason: 'endTurn' }
-    const event = new AfterModelCallEvent({ agent, model: agent.model, stopData: response, invocationState: {} })
+    const event = new AfterModelCallEvent({
+      agent,
+      model: agent.model,
+      attemptCount: 1,
+      stopData: response,
+      invocationState: {},
+    })
     expect(event._shouldReverseCallbacks()).toBe(true)
   })
 
   it('allows retry to be set when error is present', () => {
     const agent = new Agent()
     const error = new Error('Model failed')
-    const event = new AfterModelCallEvent({ agent, model: agent.model, error, invocationState: {} })
+    const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, error, invocationState: {} })
 
     // Initially undefined
     expect(event.retry).toBeUndefined()
@@ -517,7 +538,7 @@ describe('AfterModelCallEvent', () => {
   it('retry is optional and defaults to undefined', () => {
     const agent = new Agent()
     const error = new Error('Model failed')
-    const event = new AfterModelCallEvent({ agent, model: agent.model, error, invocationState: {} })
+    const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, error, invocationState: {} })
 
     expect(event.retry).toBeUndefined()
   })
@@ -977,15 +998,22 @@ describe('toJSON serialization', () => {
   })
 
   describe('AfterModelCallEvent', () => {
-    it('includes stopData and excludes agent and model on success', () => {
+    it('includes stopData and attemptCount and excludes agent and model on success', () => {
       const agent = new Agent()
       const message = new Message({ role: 'assistant', content: [new TextBlock('Hi')] })
       const stopData = { message, stopReason: 'endTurn' as const }
-      const event = new AfterModelCallEvent({ agent, model: agent.model, stopData, invocationState: {} })
+      const event = new AfterModelCallEvent({
+        agent,
+        model: agent.model,
+        attemptCount: 2,
+        stopData,
+        invocationState: {},
+      })
       const json = JSON.parse(JSON.stringify(event))
 
       expect(json).toStrictEqual({
         type: 'afterModelCallEvent',
+        attemptCount: 2,
         stopData: {
           message: { role: 'assistant', content: [{ text: 'Hi' }] },
           stopReason: 'endTurn',
@@ -996,12 +1024,13 @@ describe('toJSON serialization', () => {
     it('converts error to message string and excludes retry', () => {
       const agent = new Agent()
       const error = new Error('Model failed')
-      const event = new AfterModelCallEvent({ agent, model: agent.model, error, invocationState: {} })
+      const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, error, invocationState: {} })
       event.retry = true
       const json = JSON.parse(JSON.stringify(event))
 
       expect(json).toStrictEqual({
         type: 'afterModelCallEvent',
+        attemptCount: 1,
         error: { message: 'Model failed' },
       })
     })
@@ -1139,7 +1168,7 @@ describe('toJSON serialization completeness', () => {
       {
         name: 'AfterModelCallEvent',
         event: Object.assign(
-          new AfterModelCallEvent({ agent, model: agent.model, stopData, error, invocationState: {} }),
+          new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, stopData, error, invocationState: {} }),
           { retry: true }
         ),
       },

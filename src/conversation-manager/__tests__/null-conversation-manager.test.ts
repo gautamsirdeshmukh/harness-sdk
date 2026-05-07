@@ -17,7 +17,13 @@ describe('NullConversationManager', () => {
       manager.initAgent(mockAgent)
 
       const error = new ContextWindowOverflowError('Context overflow')
-      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, error, invocationState: {} })
+      const event = new AfterModelCallEvent({
+        agent: mockAgent,
+        model: {} as any,
+        attemptCount: 1,
+        error,
+        invocationState: {},
+      })
       await invokeTrackedHook(mockAgent, event)
 
       // Messages should be unchanged — NullConversationManager never reduces
@@ -32,7 +38,13 @@ describe('NullConversationManager', () => {
       manager.initAgent(mockAgent)
 
       const error = new ContextWindowOverflowError('Context overflow')
-      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, error, invocationState: {} })
+      const event = new AfterModelCallEvent({
+        agent: mockAgent,
+        model: {} as any,
+        attemptCount: 1,
+        error,
+        invocationState: {},
+      })
       await invokeTrackedHook(mockAgent, event)
 
       // reduce() returns false, so retry should not be set

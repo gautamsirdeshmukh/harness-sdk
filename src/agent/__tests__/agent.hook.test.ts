@@ -65,6 +65,7 @@ describe('Agent Hooks Integration', () => {
           agent,
           model: agent.model,
           invocationState: {},
+          attemptCount: 1,
           stopData: {
             stopReason: 'endTurn',
             message: new Message({ role: 'assistant', content: [new TextBlock('Hello')] }),
@@ -112,6 +113,7 @@ describe('Agent Hooks Integration', () => {
           agent,
           model: agent.model,
           invocationState: {},
+          attemptCount: 1,
           stopData: {
             stopReason: 'endTurn',
             message: new Message({ role: 'assistant', content: [new TextBlock('Hello')] }),

@@ -218,6 +218,24 @@ export type {
 // Plugin system
 export type { Plugin } from './plugins/index.js'
 
+// Retry
+export {
+  type BackoffContext,
+  type BackoffStrategy,
+  type JitterKind,
+  type ConstantBackoffOptions,
+  type LinearBackoffOptions,
+  type ExponentialBackoffOptions,
+  ConstantBackoff,
+  LinearBackoff,
+  ExponentialBackoff,
+  ModelRetryStrategy,
+  DefaultModelRetryStrategy,
+  type DefaultModelRetryStrategyOptions,
+  type RetryStrategy,
+  type RetryDecision,
+} from './retry/index.js'
+
 // Conversation Manager
 export {
   ConversationManager,

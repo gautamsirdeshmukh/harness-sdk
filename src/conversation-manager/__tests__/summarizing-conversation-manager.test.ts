@@ -308,6 +308,7 @@ describe('SummarizingConversationManager', () => {
       const event = new AfterModelCallEvent({
         agent,
         model: model as unknown as Model,
+        attemptCount: 1,
         error: new ContextWindowOverflowError('overflow'),
         invocationState: {},
       })

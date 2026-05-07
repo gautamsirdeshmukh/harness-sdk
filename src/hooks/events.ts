@@ -467,6 +467,17 @@ export class AfterModelCallEvent extends HookableEvent {
   readonly invocationState: InvocationState
 
   /**
+   * 1-indexed count of model attempts for this turn, including the attempt
+   * that just completed (or failed). The first call in a turn is `1`; each
+   * subsequent retry increments by one.
+   *
+   * Retry strategies may rely on `attemptCount === 1` to mark the start of a
+   * new retry sequence (e.g. to clear per-turn state carried over from a
+   * previous turn). The agent loop guarantees this marker on every fresh turn.
+   */
+  readonly attemptCount: number
+
+  /**
    * Optional flag that can be set by hook callbacks to request a retry of the model call.
    * When set to true, the agent will retry the model invocation.
    */
@@ -476,6 +487,7 @@ export class AfterModelCallEvent extends HookableEvent {
     agent: LocalAgent
     model: Model
     invocationState: InvocationState
+    attemptCount: number
     stopData?: ModelStopData
     error?: Error
   }) {
@@ -483,6 +495,7 @@ export class AfterModelCallEvent extends HookableEvent {
     this.agent = data.agent
     this.model = data.model
     this.invocationState = data.invocationState
+    this.attemptCount = data.attemptCount
     if (data.stopData !== undefined) {
       this.stopData = data.stopData
     }
@@ -500,9 +513,10 @@ export class AfterModelCallEvent extends HookableEvent {
    * Converts Error to an extensible object for safe wire serialization.
    * Called automatically by JSON.stringify().
    */
-  toJSON(): Pick<AfterModelCallEvent, 'type' | 'stopData'> & { error?: { message?: string } } {
+  toJSON(): Pick<AfterModelCallEvent, 'type' | 'stopData' | 'attemptCount'> & { error?: { message?: string } } {
     return {
       type: this.type,
+      attemptCount: this.attemptCount,
       ...(this.stopData !== undefined && { stopData: this.stopData }),
       ...(this.error !== undefined && { error: { message: this.error.message } }),
     }
