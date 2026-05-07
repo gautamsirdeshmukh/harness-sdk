@@ -41,7 +41,7 @@ import { SlidingWindowConversationManager } from '../conversation-manager/slidin
 import { NullConversationManager } from '../conversation-manager/null-conversation-manager.js'
 import { ConversationManager } from '../conversation-manager/conversation-manager.js'
 import { HookRegistryImplementation } from '../hooks/registry.js'
-import type { HookableEventConstructor, HookCallback, HookCleanup } from '../hooks/types.js'
+import type { HookableEventConstructor, HookCallback, HookCallbackOptions, HookCleanup } from '../hooks/types.js'
 import {
   InitializedEvent,
   AfterInvocationEvent,
@@ -362,6 +362,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * @param eventType - The event class constructor to register the callback for
    * @param callback - The callback function to invoke when the event occurs
+   * @param options - Optional configuration including execution order
    * @returns Cleanup function that removes the callback when invoked
    *
    * @example
@@ -376,8 +377,12 @@ export class Agent implements LocalAgent, InvokableAgent {
    * cleanup()
    * ```
    */
-  addHook<T extends HookableEvent>(eventType: HookableEventConstructor<T>, callback: HookCallback<T>): HookCleanup {
-    return this._hooksRegistry.addCallback(eventType, callback)
+  addHook<T extends HookableEvent>(
+    eventType: HookableEventConstructor<T>,
+    callback: HookCallback<T>,
+    options?: HookCallbackOptions
+  ): HookCleanup {
+    return this._hooksRegistry.addCallback(eventType, callback, options)
   }
 
   public async initialize(): Promise<void> {

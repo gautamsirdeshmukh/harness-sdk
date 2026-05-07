@@ -1,5 +1,6 @@
 import type { HookableEvent } from './events.js'
-import type { HookCallback, HookableEventConstructor, HookCleanup } from './types.js'
+import { HookOrder } from './types.js'
+import type { HookCallback, HookableEventConstructor, HookCallbackOptions, HookCleanup } from './types.js'
 import { InterruptError, Interrupt } from '../interrupt.js'
 
 /**
@@ -7,6 +8,7 @@ import { InterruptError, Interrupt } from '../interrupt.js'
  */
 type CallbackEntry = {
   callback: HookCallback<HookableEvent>
+  order: number
 }
 
 /**
@@ -19,9 +21,14 @@ export interface HookRegistry {
    *
    * @param eventType - The event class constructor to register the callback for
    * @param callback - The callback function to invoke when the event occurs
+   * @param options - Optional configuration including execution order
    * @returns Cleanup function that removes the callback when invoked
    */
-  addCallback<T extends HookableEvent>(eventType: HookableEventConstructor<T>, callback: HookCallback<T>): HookCleanup
+  addCallback<T extends HookableEvent>(
+    eventType: HookableEventConstructor<T>,
+    callback: HookCallback<T>,
+    options?: HookCallbackOptions
+  ): HookCleanup
 }
 
 /**
@@ -35,17 +42,24 @@ export class HookRegistryImplementation implements HookRegistry {
     this._callbacks = new Map()
   }
 
-  /**
-   * Register a callback function for a specific event type.
-   *
-   * @param eventType - The event class constructor to register the callback for
-   * @param callback - The callback function to invoke when the event occurs
-   * @returns Cleanup function that removes the callback when invoked
-   */
-  addCallback<T extends HookableEvent>(eventType: HookableEventConstructor<T>, callback: HookCallback<T>): HookCleanup {
-    const entry: CallbackEntry = { callback: callback as HookCallback<HookableEvent> }
+  /** {@inheritDoc HookRegistry.addCallback} */
+  addCallback<T extends HookableEvent>(
+    eventType: HookableEventConstructor<T>,
+    callback: HookCallback<T>,
+    options?: HookCallbackOptions
+  ): HookCleanup {
+    const entry: CallbackEntry = {
+      callback: callback as HookCallback<HookableEvent>,
+      order: options?.order ?? HookOrder.DEFAULT,
+    }
     const callbacks = this._callbacks.get(eventType) ?? []
-    callbacks.push(entry)
+    // Insert in sorted position: lower order first, same order preserves registration order
+    const insertAt = callbacks.findIndex((e) => e.order > entry.order)
+    if (insertAt === -1) {
+      callbacks.push(entry)
+    } else {
+      callbacks.splice(insertAt, 0, entry)
+    }
     this._callbacks.set(eventType, callbacks)
 
     return () => {
@@ -105,15 +119,19 @@ export class HookRegistryImplementation implements HookRegistry {
   }
 
   /**
-   * Get callbacks for a specific event with proper ordering.
-   * Returns callbacks in reverse order if event should reverse callbacks.
+   * Get callbacks for a specific event in order.
+   * For After* events, reverses then re-sorts by order so that lower order
+   * still runs first, but same-order hooks run in reverse registration order.
    *
    * @param event - The event to get callbacks for
    * @returns Array of callbacks for the event
    */
   private getCallbacksFor<T extends HookableEvent>(event: T): HookCallback<T>[] {
     const entries = this._callbacks.get(event.constructor as HookableEventConstructor<T>) ?? []
-    const callbacks = entries.map((entry) => entry.callback)
-    return (event._shouldReverseCallbacks() ? [...callbacks].reverse() : callbacks) as HookCallback<T>[]
+    if (event._shouldReverseCallbacks()) {
+      const reversed = [...entries].reverse().sort((a, b) => a.order - b.order)
+      return reversed.map((entry) => entry.callback) as HookCallback<T>[]
+    }
+    return entries.map((entry) => entry.callback) as HookCallback<T>[]
   }
 }

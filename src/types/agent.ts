@@ -22,7 +22,7 @@ import type {
   HookableEvent,
   StreamEvent,
 } from '../hooks/events.js'
-import type { HookCallback, HookableEventConstructor, HookCleanup } from '../hooks/types.js'
+import type { HookCallback, HookableEventConstructor, HookCallbackOptions, HookCleanup } from '../hooks/types.js'
 import type { ToolRegistry } from '../registry/tool-registry.js'
 import type { Model } from '../models/model.js'
 import type { z } from 'zod'
@@ -253,11 +253,20 @@ export interface LocalAgent {
   /**
    * Register a hook callback for a specific event type.
    *
+   * Hooks execute in order from lowest to highest. Lower values always run
+   * first, on both Before* and After* events. Within the same order, After*
+   * events reverse registration order for cleanup symmetry.
+   *
    * @param eventType - The event class constructor to register the callback for
    * @param callback - The callback function to invoke when the event occurs
+   * @param options - Optional configuration including execution order
    * @returns Cleanup function that removes the callback when invoked
    */
-  addHook<T extends HookableEvent>(eventType: HookableEventConstructor<T>, callback: HookCallback<T>): HookCleanup
+  addHook<T extends HookableEvent>(
+    eventType: HookableEventConstructor<T>,
+    callback: HookCallback<T>,
+    options?: HookCallbackOptions
+  ): HookCleanup
 }
 
 /**

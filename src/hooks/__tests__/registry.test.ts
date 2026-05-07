@@ -159,6 +159,102 @@ describe('HookRegistryImplementation', () => {
     })
   })
 
+  describe('ordering', () => {
+    it('lower order runs first', async () => {
+      const callOrder: number[] = []
+      registry.addCallback(BeforeInvocationEvent, () => {
+        callOrder.push(0)
+      })
+      registry.addCallback(
+        BeforeInvocationEvent,
+        () => {
+          callOrder.push(100)
+        },
+        { order: 100 }
+      )
+      registry.addCallback(
+        BeforeInvocationEvent,
+        () => {
+          callOrder.push(-100)
+        },
+        { order: -100 }
+      )
+
+      await registry.invokeCallbacks(new BeforeInvocationEvent({ agent: mockAgent, invocationState: {} }))
+
+      expect(callOrder).toEqual([-100, 0, 100])
+    })
+
+    it('same order preserves registration order', async () => {
+      const callOrder: string[] = []
+      registry.addCallback(
+        BeforeInvocationEvent,
+        () => {
+          callOrder.push('first')
+        },
+        { order: 10 }
+      )
+      registry.addCallback(
+        BeforeInvocationEvent,
+        () => {
+          callOrder.push('second')
+        },
+        { order: 10 }
+      )
+      registry.addCallback(
+        BeforeInvocationEvent,
+        () => {
+          callOrder.push('third')
+        },
+        { order: 10 }
+      )
+
+      await registry.invokeCallbacks(new BeforeInvocationEvent({ agent: mockAgent, invocationState: {} }))
+
+      expect(callOrder).toEqual(['first', 'second', 'third'])
+    })
+
+    it('negative order runs before default', async () => {
+      const callOrder: string[] = []
+      registry.addCallback(BeforeInvocationEvent, () => {
+        callOrder.push('default')
+      })
+      registry.addCallback(
+        BeforeInvocationEvent,
+        () => {
+          callOrder.push('early')
+        },
+        { order: -100 }
+      )
+
+      await registry.invokeCallbacks(new BeforeInvocationEvent({ agent: mockAgent, invocationState: {} }))
+
+      expect(callOrder).toEqual(['early', 'default'])
+    })
+
+    it('After events: lower order still runs first across groups', async () => {
+      const callOrder: string[] = []
+      registry.addCallback(
+        AfterInvocationEvent,
+        () => {
+          callOrder.push('early')
+        },
+        { order: -100 }
+      )
+      registry.addCallback(
+        AfterInvocationEvent,
+        () => {
+          callOrder.push('late')
+        },
+        { order: 100 }
+      )
+
+      await registry.invokeCallbacks(new AfterInvocationEvent({ agent: mockAgent, invocationState: {} }))
+
+      expect(callOrder).toEqual(['early', 'late'])
+    })
+  })
+
   describe('addCallback cleanup function', () => {
     it('returns cleanup function that removes the callback', async () => {
       const callback = vi.fn()
