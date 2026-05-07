@@ -221,7 +221,9 @@ export type { Plugin } from './plugins/index.js'
 // Conversation Manager
 export {
   ConversationManager,
+  type ProactiveCompressionConfig,
   type ConversationManagerReduceOptions,
+  type ConversationManagerOptions,
 } from './conversation-manager/conversation-manager.js'
 export { NullConversationManager } from './conversation-manager/null-conversation-manager.js'
 export {

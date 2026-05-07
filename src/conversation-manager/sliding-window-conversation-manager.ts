@@ -8,7 +8,11 @@
 import { Message, TextBlock, ToolResultBlock } from '../types/messages.js'
 import type { LocalAgent } from '../types/agent.js'
 import { AfterInvocationEvent } from '../hooks/events.js'
-import { ConversationManager, type ConversationManagerReduceOptions } from './conversation-manager.js'
+import {
+  ConversationManager,
+  type ProactiveCompressionConfig,
+  type ConversationManagerReduceOptions,
+} from './conversation-manager.js'
 import { logger } from '../logging/logger.js'
 
 /**
@@ -26,6 +30,15 @@ export type SlidingWindowConversationManagerConfig = {
    * Defaults to true.
    */
   shouldTruncateResults?: boolean
+
+  /**
+   * Enable proactive context compression before the model call.
+   *
+   * - `true`: compress when 70% of the context window is used (default threshold).
+   * - `{ compressionThreshold: number }`: compress at the specified ratio (0, 1].
+   * - `false` or omitted: disabled, only reactive overflow recovery is used.
+   */
+  proactiveCompression?: boolean | ProactiveCompressionConfig
 }
 
 /**
@@ -39,6 +52,7 @@ export type SlidingWindowConversationManagerConfig = {
  * Registers hooks for:
  * - AfterInvocationEvent: Applies sliding window management after each invocation
  * - AfterModelCallEvent: Reduces context on overflow errors and requests retry (via super)
+ * - BeforeModelCallEvent: Proactive compression when threshold is exceeded (via super)
  */
 export class SlidingWindowConversationManager extends ConversationManager {
   private readonly _windowSize: number
@@ -55,7 +69,7 @@ export class SlidingWindowConversationManager extends ConversationManager {
    * @param config - Configuration options for the sliding window manager.
    */
   constructor(config?: SlidingWindowConversationManagerConfig) {
-    super()
+    super(config)
     this._windowSize = config?.windowSize ?? 40
     this._shouldTruncateResults = config?.shouldTruncateResults ?? true
   }
@@ -66,6 +80,7 @@ export class SlidingWindowConversationManager extends ConversationManager {
    * Registers:
    * - AfterInvocationEvent callback to apply sliding window management
    * - AfterModelCallEvent callback to handle context overflow and request retry (via super)
+   * - BeforeModelCallEvent callback for proactive compression (via super)
    *
    * @param agent - The agent to register hooks with
    */
@@ -78,9 +93,13 @@ export class SlidingWindowConversationManager extends ConversationManager {
   }
 
   /**
-   * Reduce the conversation history in response to a context overflow.
+   * Reduce the conversation history.
    *
-   * Attempts to truncate large tool results first before falling back to message trimming.
+   * When `error` is set (reactive overflow recovery), attempts to truncate large tool results
+   * first before falling back to message trimming.
+   *
+   * When `error` is undefined (proactive compression), only trims messages without attempting
+   * tool result truncation.
    *
    * @param options - The reduction options
    * @returns `true` if the history was reduced, `false` otherwise

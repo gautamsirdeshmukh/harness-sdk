@@ -7,8 +7,14 @@
  */
 
 import { Message, TextBlock } from '../types/messages.js'
-import { ConversationManager, type ConversationManagerReduceOptions } from './conversation-manager.js'
+import type { LocalAgent } from '../types/agent.js'
+import {
+  ConversationManager,
+  type ProactiveCompressionConfig,
+  type ConversationManagerReduceOptions,
+} from './conversation-manager.js'
 import { logger } from '../logging/logger.js'
+import { normalizeError } from '../errors.js'
 import type { Model } from '../models/model.js'
 
 const DEFAULT_SUMMARIZATION_PROMPT = `You are a conversation summarizer. Provide a concise summary of the conversation \
@@ -68,6 +74,15 @@ export type SummarizingConversationManagerConfig = {
    * prompt that produces structured bullet-point summaries.
    */
   summarizationSystemPrompt?: string
+
+  /**
+   * Enable proactive context compression before the model call.
+   *
+   * - `true`: compress when 70% of the context window is used (default threshold).
+   * - `{ compressionThreshold: number }`: compress at the specified ratio (0, 1].
+   * - `false` or omitted: disabled, only reactive overflow recovery is used.
+   */
+  proactiveCompression?: boolean | ProactiveCompressionConfig
 }
 
 /**
@@ -86,7 +101,7 @@ export class SummarizingConversationManager extends ConversationManager {
   private readonly _summarizationSystemPrompt: string
 
   constructor(config?: SummarizingConversationManagerConfig) {
-    super()
+    super(config)
     this._model = config?.model
     // clamped [0.1, 0.8]
     this._summaryRatio = Math.max(0.1, Math.min(0.8, config?.summaryRatio ?? 0.3))
@@ -97,12 +112,40 @@ export class SummarizingConversationManager extends ConversationManager {
   /**
    * Reduce the conversation history by summarizing older messages.
    *
+   * When `error` is set (reactive overflow recovery), summarization failure is rethrown
+   * with the original error as cause — the agent loop must not proceed with an overflow.
+   *
+   * When `error` is undefined (proactive compression), summarization failure is logged
+   * and returns `false` — the model call proceeds regardless.
+   *
    * @param options - The reduction options
    * @returns `true` if the history was reduced, `false` otherwise
    */
   async reduce({ agent, model, error }: ConversationManagerReduceOptions): Promise<boolean> {
-    const resolvedModel = this._model ?? model
+    try {
+      return await this._summarizeOldest(agent, this._model ?? model)
+    } catch (summarizationError) {
+      if (error) {
+        // Reactive: rethrow so the ContextWindowOverflowError propagates
+        logger.error(`error=<${summarizationError}> | summarization failed`)
+        const wrapped = normalizeError(summarizationError)
+        wrapped.cause = error
+        throw wrapped
+      }
+      // Proactive: best-effort, swallow errors so the model call can still proceed.
+      logger.warn(`error=<${summarizationError}> | proactive summarization failed, continuing`)
+      return false
+    }
+  }
 
+  /**
+   * Summarize the oldest messages and replace them with a summary.
+   *
+   * @param agent - The agent instance
+   * @param model - The model to use for summarization
+   * @returns `true` if the history was reduced, `false` otherwise
+   */
+  private async _summarizeOldest(agent: LocalAgent, model: Model): Promise<boolean> {
     const messages = agent.messages
 
     // Calculate how many messages to summarize
@@ -121,22 +164,15 @@ export class SummarizingConversationManager extends ConversationManager {
     // Adjust split point to avoid breaking tool use/result pairs
     messagesToSummarizeCount = this._adjustSplitPointForToolPairs(messages, messagesToSummarizeCount)
 
-    try {
-      const messagesToSummarize = messages.slice(0, messagesToSummarizeCount)
+    const messagesToSummarize = messages.slice(0, messagesToSummarizeCount)
 
-      // Generate summary via model call
-      const summaryMessage = await this._generateSummary(messagesToSummarize, resolvedModel)
+    // Generate summary via model call
+    const summaryMessage = await this._generateSummary(messagesToSummarize, model)
 
-      // Replace summarized messages with the summary
-      messages.splice(0, messagesToSummarizeCount, summaryMessage)
+    // Replace summarized messages with the summary
+    messages.splice(0, messagesToSummarizeCount, summaryMessage)
 
-      return true
-    } catch (summarizationError) {
-      logger.error(`error=<${summarizationError}> | summarization failed`)
-      const wrapped = summarizationError instanceof Error ? summarizationError : new Error(String(summarizationError))
-      wrapped.cause = error
-      throw wrapped
-    }
+    return true
   }
 
   /**
