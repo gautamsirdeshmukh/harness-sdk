@@ -224,6 +224,10 @@ export type {
 // Plugin system
 export type { Plugin } from './plugins/index.js'
 
+// Intervention system
+export { InterventionHandler, InterventionActions } from './interventions/index.js'
+export type { OnError } from './interventions/index.js'
+
 // Retry
 export {
   type BackoffContext,
