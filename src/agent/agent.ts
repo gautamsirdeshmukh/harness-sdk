@@ -68,6 +68,8 @@ import {
 import { StructuredOutputTool, STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { AgentAsTool } from './agent-as-tool.js'
 import type { AgentAsToolOptions } from './agent-as-tool.js'
+import { ToolCaller } from './tool-caller.js'
+import type { ToolCallerProxy } from './tool-caller.js'
 
 import type { z } from 'zod'
 import { SessionManager } from '../session/session-manager.js'
@@ -304,6 +306,8 @@ export class Agent implements LocalAgent, InvokableAgent {
   _interruptState: InterruptState
   /** Strategy for executing tool calls from a single assistant turn. */
   private readonly _toolExecutor: ToolExecutorStrategy
+  /** Direct tool caller — created via {@link ToolCaller.create} factory. */
+  private readonly _toolCaller: ToolCallerProxy
 
   /**
    * Creates an instance of the Agent.
@@ -397,6 +401,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     this._interruptState = new InterruptState()
 
     this._toolExecutor = config?.toolExecutor ?? 'concurrent'
+    // Pass a private helper into ToolCaller so message append + hook firing
+    // remains an internal concern of Agent (not exposed as a public method).
+    this._toolCaller = ToolCaller.create(this, (message, invocationState) =>
+      this._appendMessageAndFireHooks(message, invocationState)
+    )
 
     this._initialized = false
   }
@@ -494,6 +503,34 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   get toolRegistry(): ToolRegistry {
     return this._toolRegistry
+  }
+
+  /**
+   * Whether the agent is currently processing an invocation.
+   */
+  get isInvoking(): boolean {
+    return this._isInvoking
+  }
+
+  /**
+   * Direct tool calling accessor.
+   *
+   * Returns a proxy where each property is a {@link ToolHandle} with
+   * `.invoke()` and `.stream()` methods:
+   * ```typescript
+   * const result = await agent.tool.calculator!.invoke({ a: 5, b: 3 })
+   *
+   * for await (const event of agent.tool.calculator!.stream({ a: 5, b: 3 })) {
+   *   console.log('progress:', event)
+   * }
+   * ```
+   *
+   * Supports underscore-to-hyphen and case-insensitive name resolution.
+   * Results are recorded in message history by default (pass
+   * `{ recordDirectToolCall: false }` to skip).
+   */
+  get tool(): ToolCallerProxy {
+    return this._toolCaller
   }
 
   /**
@@ -2058,6 +2095,18 @@ export class Agent implements LocalAgent, InvokableAgent {
     }
 
     return estimate
+  }
+
+  /**
+   * Appends a message to the conversation history and fires MessageAddedEvent hooks.
+   *
+   * Used by {@link ToolCaller} (via the helper passed to `ToolCaller.create`) for
+   * direct tool calls that cannot yield events into the agent stream. This stays
+   * private — callers outside the agent should never directly mutate messages.
+   */
+  private async _appendMessageAndFireHooks(message: Message, invocationState: InvocationState = {}): Promise<void> {
+    this.messages.push(message)
+    await this._hooksRegistry.invokeCallbacks(new MessageAddedEvent({ agent: this, message, invocationState }))
   }
 
   /**
