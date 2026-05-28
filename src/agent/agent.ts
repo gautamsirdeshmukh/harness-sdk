@@ -15,6 +15,7 @@ import {
   type ContentBlockData,
   Message,
   type MessageData,
+  type StopReason,
   type SystemPrompt,
   type SystemPromptData,
   TextBlock,
@@ -494,6 +495,64 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Validates the per-invocation budget caps in {@link InvokeOptions.limits}.
+   * Called once at the top of `_stream` so bad inputs fail fast with a clear
+   * error instead of silently no-op'ing (`NaN`, `Infinity`) or tripping
+   * pathologically (zero swallows the user input; negative trips immediately).
+   *
+   * Each cap, when set, must be a positive finite number. Fractional values
+   * are accepted — harmless, and useful for token budgets derived from
+   * arithmetic.
+   */
+  private _validateLimits(options: InvokeOptions | undefined): void {
+    if (!options?.limits) return
+    const assertPositive = (name: string, value: number | undefined): void => {
+      if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+        throw new TypeError(`${name} must be a positive finite number, got ${value}`)
+      }
+    }
+    assertPositive('limits.turns', options.limits.turns)
+    assertPositive('limits.outputTokens', options.limits.outputTokens)
+    assertPositive('limits.totalTokens', options.limits.totalTokens)
+  }
+
+  /**
+   * Evaluates the per-invocation budget caps in {@link InvokeOptions.limits}
+   * against the current invocation's metrics. Called at the top of each
+   * agent-loop iteration, after `_throwIfCancelled` and before `startCycle`.
+   *
+   * Reads from {@link AgentMetrics.latestAgentInvocation} (scoped to the
+   * current invocation) — not `cycleCount` / `accumulatedUsage`, which are
+   * lifetime accumulators that would cause caps to fire prematurely on the
+   * second `invoke()` call against a reused agent.
+   *
+   * Priority on simultaneous trip: turns → totalTokens → outputTokens.
+   *
+   * Returns the {@link StopReason} the loop should terminate with, or
+   * `undefined` if every configured cap is still within budget.
+   */
+  private _checkLimits(options: InvokeOptions | undefined): StopReason | undefined {
+    const limits = options?.limits
+    if (!limits) return undefined
+    const invocation = this._meter.metrics.latestAgentInvocation
+    if (!invocation) return undefined
+
+    const cycleCount = invocation.cycles.length
+    const { outputTokens, totalTokens } = invocation.usage
+
+    if (limits.turns !== undefined && cycleCount >= limits.turns) {
+      return 'limitTurns'
+    }
+    if (limits.totalTokens !== undefined && totalTokens >= limits.totalTokens) {
+      return 'limitTotalTokens'
+    }
+    if (limits.outputTokens !== undefined && outputTokens >= limits.outputTokens) {
+      return 'limitOutputTokens'
+    }
+    return undefined
+  }
+
+  /**
    * The tools this agent can use.
    */
   get tools(): Tool[] {
@@ -862,6 +921,8 @@ export class Agent implements LocalAgent, InvokableAgent {
     let currentArgs: InvokeArgs | undefined = args
     let result: AgentResult | undefined
 
+    this._validateLimits(options)
+
     // Resolve structured output schema from per-invocation options or constructor config
     const structuredOutputSchema = options?.structuredOutputSchema ?? this._structuredOutputSchema
     const structuredOutputTool = structuredOutputSchema ? new StructuredOutputTool(structuredOutputSchema) : undefined
@@ -928,6 +989,18 @@ export class Agent implements LocalAgent, InvokableAgent {
       // Main agent loop - continues until model stops without requesting tools
       while (true) {
         this._throwIfCancelled()
+
+        const limitStopReason = this._checkLimits(options)
+        if (limitStopReason) {
+          result = new AgentResult({
+            stopReason: limitStopReason,
+            lastMessage: this.messages.at(-1)!,
+            traces: this._tracer.localTraces,
+            metrics: this._meter.metrics,
+            invocationState,
+          })
+          return result
+        }
 
         // Start metrics cycle tracking
         const { cycleId, startTime: cycleStartTime } = this._meter.startCycle()
