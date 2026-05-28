@@ -177,12 +177,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/strands-agents/sdk-typescript.git"
+    "url": "git+https://github.com/strands-agents/sdk-python.git"
   },
   "bugs": {
-    "url": "https://github.com/strands-agents/sdk-typescript/issues"
+    "url": "https://github.com/strands-agents/sdk-python/issues"
   },
-  "homepage": "https://github.com/strands-agents/sdk-typescript#readme",
+  "homepage": "https://github.com/strands-agents/sdk-python#readme",
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1037.0",
     "@types/json-schema": "^7.0.15",
