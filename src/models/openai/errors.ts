@@ -9,12 +9,15 @@
  *
  * @see https://platform.openai.com/docs/guides/error-codes
  */
+// Union of overflow phrases observed across OpenAI responses, matched
+// case-insensitively. Lowercased here so the comparison is a single
+// ``toLowerCase`` on the error message.
 const CONTEXT_WINDOW_OVERFLOW_PATTERNS = [
   'maximum context length',
   'context_length_exceeded',
   'too many tokens',
   'context length',
-  'Input is too long for requested model',
+  'input is too long for requested model',
   'input length and `max_tokens` exceed context limit',
   'too many total text bytes',
 ]
@@ -41,10 +44,7 @@ export function classifyOpenAIError(err: Error & { status?: number; code?: strin
     return 'throttling'
   }
 
-  if (
-    code === 'context_length_exceeded' ||
-    CONTEXT_WINDOW_OVERFLOW_PATTERNS.some((pattern) => message.includes(pattern.toLowerCase()))
-  ) {
+  if (code === 'context_length_exceeded' || CONTEXT_WINDOW_OVERFLOW_PATTERNS.some((p) => message.includes(p))) {
     return 'contextOverflow'
   }
 
