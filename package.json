@@ -80,6 +80,10 @@
       "types": "./dist/src/vended-plugins/context-offloader/index.d.ts",
       "default": "./dist/src/vended-plugins/context-offloader/index.js"
     },
+    "./vended-plugins/goal": {
+      "types": "./dist/src/vended-plugins/goal/index.d.ts",
+      "default": "./dist/src/vended-plugins/goal/index.js"
+    },
     "./vended-interventions/hitl": {
       "types": "./dist/src/vended-interventions/hitl/index.d.ts",
       "default": "./dist/src/vended-interventions/hitl/index.js"
@@ -172,9 +176,9 @@
     "@types/uuid": "^11.0.0",
     "@typescript-eslint/eslint-plugin": "^8.48.1",
     "@typescript-eslint/parser": "^8.0.0",
-    "@vitest/browser": "^4.0.15",
-    "@vitest/browser-playwright": "^4.0.15",
-    "@vitest/coverage-v8": "^4.0.15",
+    "@vitest/browser": "^4.1.6",
+    "@vitest/browser-playwright": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.6",
     "eslint": "^10.2.0",
     "eslint-plugin-tsdoc": "^0.5.0",
     "express": "^5.2.1",
@@ -182,7 +186,7 @@
     "playwright": "^1.60.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
-    "vitest": "^4.0.8"
+    "vitest": "^4.1.6"
   },
   "engines": {
     "node": ">=20.0.0"
