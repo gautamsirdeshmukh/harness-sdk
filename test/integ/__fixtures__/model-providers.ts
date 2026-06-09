@@ -15,7 +15,7 @@ import { createOpenAI } from '@ai-sdk/openai'
  * Feature support flags for model providers.
  * Used to conditionally run tests based on model capabilities.
  *
- * TODO: after https://github.com/strands-agents/sdk-python/issues/780 this config should be in src not test
+ * TODO: after https://github.com/strands-agents/harness-sdk/issues/780 this config should be in src not test
  */
 export interface ProviderFeatures {
   reasoning: boolean
