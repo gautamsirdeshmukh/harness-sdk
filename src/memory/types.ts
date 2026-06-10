@@ -1,5 +1,7 @@
 import type { JSONValue } from '../types/json.js'
+import type { MessageData } from '../types/messages.js'
 import type { Tool } from '../tools/tool.js'
+import type { ExtractionConfig } from './extraction/types.js'
 
 /**
  * A single memory entry retrieved from or stored to a memory store.
@@ -32,6 +34,13 @@ export interface SearchOptions {
 }
 
 /**
+ * Context the {@link MemoryManager} supplies to {@link MemoryStore.addMessages} alongside a batch.
+ */
+// Extension point: empty interface so fields can be added without a breaking signature change.
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface AddMessagesContext {}
+
+/**
  * Declarative properties shared by every memory store and its config.
  *
  * This is the single source of truth for a store's identity and behavior knobs. Both the runtime
@@ -55,6 +64,12 @@ export interface MemoryStoreConfig {
    * @defaultValue false
    */
   readonly writable?: boolean
+  /**
+   * Automatic-extraction configuration for this store. When set, the {@link MemoryManager} runs the
+   * configured triggers and writes extracted (or, with no extractor, raw) messages to this store.
+   * Requires the store to be writable. Omit for a purely tool-driven store.
+   */
+  readonly extraction?: ExtractionConfig
 }
 
 /**
@@ -69,20 +84,49 @@ export interface MemoryStore extends MemoryStoreConfig {
   /**
    * Whether this store accepts writes.
    * - `false`: searchable only; never written to.
-   * - `true`: searchable and writable. Requires `add` to be implemented.
+   * - `true`: searchable and writable. Requires at least one write sink — `add`, `addMessages`,
+   *   or both — to be implemented.
    */
   readonly writable: boolean
   /** Search the store for entries matching the query, ordered by relevance. */
   search(query: string, options?: SearchOptions): Promise<MemoryEntry[]>
   /**
-   * Add content to the store. Required when `writable` is `true`; ignored otherwise.
-   * A store may implement `add` while declaring `writable: false`, in which case it is never invoked.
+   * Add a single piece of content to the store. Used by the `add_memory` tool, the programmatic
+   * {@link MemoryManager.add}, and by extraction when an {@link ExtractionConfig.extractor} produces
+   * discrete entries (an extraction config with an extractor requires this method).
+   *
+   * A store satisfies `writable: true` with `add`, {@link addMessages}, or both. A store may also
+   * implement `add` while declaring `writable: false`, in which case it is never invoked.
+   *
+   * Extraction writes are at-least-once: if one entry in a batch fails, the whole batch is retried, so
+   * `add` may be called again with content it already stored. Implementations used with extraction
+   * should tolerate duplicate writes (e.g. dedupe, or accept that retries may re-store an entry).
    *
    * The resolved value is store-specific (e.g. a created record id or a write receipt) — each backend
-   * may return whatever shape fits it. {@link MemoryManager.add} does not consume this value (it only
+   * may return whatever shape fits it. The {@link MemoryManager} does not consume this value (it only
    * awaits completion); callers using a store directly can read it.
    */
   add?(content: string, metadata?: Record<string, JSONValue>): Promise<unknown>
+  /**
+   * Ingest a batch of conversation messages, preserving their role structure. This is the sink for
+   * automatic extraction that does not distill facts client-side: the manager hands the filtered
+   * {@link MessageData} batch straight here in one call — no serialization, no model call. Backends
+   * that turn raw turns into memory themselves (e.g. role-aware conversational APIs that summarize
+   * server-side) implement this so the user/assistant structure survives. A store using extraction
+   * implements this method, unless it configures an {@link ExtractionConfig.extractor} (which produces
+   * discrete entries written via {@link add} instead).
+   *
+   * Satisfies `writable: true` the same way {@link add} does. The resolved value is store-specific
+   * and not consumed by the manager.
+   *
+   * A store scopes its writes (e.g. by tenant or namespace) through its own configuration. The
+   * {@link AddMessagesContext} parameter lets the manager pass additional per-batch context to the
+   * store.
+   *
+   * @param messages - The filtered messages to ingest, in order
+   * @param context - Manager-supplied per-batch context (see {@link AddMessagesContext})
+   */
+  addMessages?(messages: MessageData[], context?: AddMessagesContext): Promise<unknown>
   /**
    * Returns store-specific tools to register with the agent, through a {@link MemoryManager}. Registers
    * tools alongside `search_memory` / `add_memory` tools if enabled on the {@link MemoryManager}.

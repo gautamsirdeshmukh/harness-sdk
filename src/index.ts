@@ -318,9 +318,22 @@ export type {
   MemoryStore,
   MemoryStoreConfig,
   SearchOptions,
+  AddMessagesContext,
   MemorySearchOptions,
   MemoryAddOptions,
   MemoryToolConfig,
   MemoryAddToolConfig,
   MemoryManagerConfig,
+} from './memory/index.js'
+export { ExtractionTrigger, InvocationTrigger, IntervalTrigger, ModelExtractor } from './memory/index.js'
+export type {
+  ExtractionConfig,
+  Extractor,
+  ExtractorContext,
+  ExtractionResult,
+  ExtractionTriggerContext,
+  MemoryMessageFilter,
+  MemoryContentBlockType,
+  IntervalTriggerOptions,
+  ModelExtractorOptions,
 } from './memory/index.js'
