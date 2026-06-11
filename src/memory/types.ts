@@ -75,11 +75,18 @@ export interface MemoryStoreConfig {
    */
   readonly writable?: boolean
   /**
-   * Automatic-extraction configuration for this store. When set, the {@link MemoryManager} runs the
-   * configured triggers and writes extracted (or, with no extractor, raw) messages to this store.
-   * Requires the store to be writable. Omit for a purely tool-driven store.
+   * Automatic-extraction config for this writable store, as a `boolean | config` shorthand. `true`
+   * enables it with defaults; an {@link ExtractionConfig} defaults any unset field; `false`/omitted is off.
+   *
+   * The defaults run every 5 turns, and the extraction method depends on the store's write methods. A
+   * store implementing `addMessages` uses server-side extraction: the manager hands it the raw messages
+   * and the backend extracts them, with no model call. A store implementing only `add` uses a
+   * {@link ModelExtractor} for client-side extraction: it calls the agent's model to distill facts and
+   * stores each one via `add`.
+   *
+   * @defaultValue false
    */
-  readonly extraction?: ExtractionConfig
+  readonly extraction?: boolean | ExtractionConfig
 }
 
 /**

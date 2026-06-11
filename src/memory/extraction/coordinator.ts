@@ -3,12 +3,30 @@ import type { MessageData, ContentBlockData } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
 import { logger } from '../../logging/logger.js'
 import { normalizeError } from '../../errors.js'
-import { DEFAULT_MEMORY_MESSAGE_FILTER, type MemoryMessageFilter } from './types.js'
+import type { MemoryMessageFilter } from './types.js'
+import type { ResolvedExtractionConfig } from './resolve-extraction-config.js'
 
-/** Number of consecutive save failures after which a store backs off (stops trying every turn). */
+/**
+ * A store paired with its fully-resolved extraction config.
+ * @internal
+ */
+export interface ExtractionBinding {
+  /** The memory store to extract into. */
+  store: MemoryStore
+  /** The store's fully-resolved extraction config (triggers, extractor, filter). */
+  config: ResolvedExtractionConfig
+}
+
+/**
+ * Number of consecutive save failures after which a store backs off (stops trying every turn).
+ * @internal
+ */
 export const SAVE_FAILURES_BEFORE_BACKOFF = 10
 
-/** While backed off, a store retries only once every this many save attempts (a probe). */
+/**
+ * While backed off, a store retries only once every this many save attempts (a probe).
+ * @internal
+ */
 export const BACKOFF_PROBE_INTERVAL = 3
 
 /** A buffered message and its sequence number. */
@@ -74,9 +92,12 @@ function _filterMessages(buffered: BufferedMessage[], filter: MemoryMessageFilte
  *
  * Saving itself either runs the store's extractor to pull out facts, or hands the raw messages to the
  * store - see {@link _write}.
+ * @internal
  */
 export class ExtractionCoordinator {
   private readonly _stores: MemoryStore[]
+  /** Per store: its resolved extraction config (triggers, extractor, filter). */
+  private readonly _storeToExtractionConfig = new Map<MemoryStore, ResolvedExtractionConfig>()
   private readonly _defaultModel: Model
   /** The shared list of messages waiting to be saved, oldest first. Each is tagged with its `seq`. */
   private _pending: BufferedMessage[] = []
@@ -92,13 +113,14 @@ export class ExtractionCoordinator {
   private readonly _backoffCounters = new Map<MemoryStore, number>()
 
   /**
-   * @param stores - The extraction-configured stores this coordinator manages
+   * @param stores - The extraction-configured stores this coordinator manages, each with its resolved config
    * @param defaultModel - The agent's model, passed to extractors that don't configure their own
    */
-  constructor(stores: MemoryStore[], defaultModel: Model) {
-    this._stores = stores
+  constructor(stores: ExtractionBinding[], defaultModel: Model) {
+    this._stores = stores.map((s) => s.store)
     this._defaultModel = defaultModel
-    for (const store of stores) {
+    for (const { store, config } of stores) {
+      this._storeToExtractionConfig.set(store, config)
       this._marks.set(store, -1)
     }
   }
@@ -177,8 +199,7 @@ export class ExtractionCoordinator {
     const highestSeq = fresh[fresh.length - 1]!.seq
     this._marks.set(store, highestSeq)
 
-    const extraction = store.extraction!
-    const filter = extraction.filter ?? DEFAULT_MEMORY_MESSAGE_FILTER
+    const filter = this._storeToExtractionConfig.get(store)!.filter
     const filtered = _filterMessages(fresh, filter)
 
     try {
@@ -227,7 +248,7 @@ export class ExtractionCoordinator {
    * next time - so a fact that already saved may be written again (stores should expect duplicates).
    */
   private async _write(store: MemoryStore, buffered: BufferedMessage[]): Promise<void> {
-    const extractor = store.extraction!.extractor
+    const extractor = this._storeToExtractionConfig.get(store)!.extractor
     const messages = buffered.map((buffer) => buffer.message)
 
     if (extractor) {

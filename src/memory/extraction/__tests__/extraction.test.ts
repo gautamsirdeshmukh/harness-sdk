@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import { MemoryManager } from '../../memory-manager.js'
 import { InvocationTrigger, IntervalTrigger } from '../triggers.js'
-import { ExtractionCoordinator, SAVE_FAILURES_BEFORE_BACKOFF, BACKOFF_PROBE_INTERVAL } from '../coordinator.js'
+import {
+  ExtractionCoordinator,
+  SAVE_FAILURES_BEFORE_BACKOFF,
+  BACKOFF_PROBE_INTERVAL,
+  type ExtractionBinding,
+} from '../coordinator.js'
+import { resolveExtractionConfig } from '../resolve-extraction-config.js'
 import type { Model } from '../../../models/model.js'
 import type { ExtractionConfig, Extractor } from '../types.js'
 import type { MemoryStore, MemoryEntry, AddMessagesContext } from '../../types.js'
@@ -9,6 +15,7 @@ import type { MessageData } from '../../../types/messages.js'
 import { Message, TextBlock, ToolUseBlock } from '../../../types/messages.js'
 import { AfterInvocationEvent, MessageAddedEvent } from '../../../hooks/events.js'
 import { createMockAgent, type MockAgent } from '../../../__fixtures__/agent-helpers.js'
+import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 
 /**
  * Builds a writable store with an extraction config. `sink` chooses which write method(s) it has,
@@ -17,7 +24,7 @@ import { createMockAgent, type MockAgent } from '../../../__fixtures__/agent-hel
  */
 function createExtractionStore(
   name: string,
-  extraction: ExtractionConfig,
+  extraction: boolean | ExtractionConfig | undefined,
   sink: 'add' | 'addMessages' | 'both' = 'both',
   options?: { entries?: MemoryEntry[] }
 ): MemoryStore & {
@@ -36,6 +43,11 @@ function createExtractionStore(
   if (sink === 'add') delete (store as Partial<MemoryStore>).addMessages
   if (sink === 'addMessages') delete (store as Partial<MemoryStore>).add
   return store
+}
+
+/** Wraps a store into the {@link ExtractionBinding} pair the coordinator takes, resolving its config. */
+function asExtractionStore(store: MemoryStore): ExtractionBinding {
+  return { store, config: resolveExtractionConfig(store.extraction, store)! }
 }
 
 function userMsg(text: string): Message {
@@ -104,10 +116,60 @@ describe('MemoryManager extraction', () => {
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()], extractor }, 'addMessages')
       expect(() => new MemoryManager({ stores: [store] })).toThrow('has an extractor but no add method')
     })
+  })
 
-    it('throws when extraction has no extractor but the store has no addMessages', () => {
+  describe('config resolution', () => {
+    it('enables extraction with defaults via the boolean shorthand', async () => {
+      // `extraction: true` on an addMessages-capable store -> passthrough (no implicit model call).
+      const store = createExtractionStore('s', true, 'addMessages')
+      const mm = new MemoryManager({ stores: [store] })
+      const agent = createMockAgent()
+      mm.initAgent(agent)
+
+      await addMessages(agent, userMsg('remember this'))
+      // The default trigger fires every DEFAULT_EXTRACTION_TRIGGER_TURNS turns; flush forces the write.
+      await mm.flush()
+      expect(store.addMessages).toHaveBeenCalledTimes(1)
+    })
+
+    it('treats extraction: false as disabled (no hooks, no writes)', async () => {
+      const store = createExtractionStore('s', false, 'addMessages')
+      const mm = new MemoryManager({ stores: [store] })
+      const agent = createMockAgent()
+      mm.initAgent(agent)
+
+      await addMessages(agent, userMsg('ignored'))
+      await mm.flush()
+      expect(store.addMessages).not.toHaveBeenCalled()
+      expect(agent.trackedHooks.filter((h) => h.eventType === AfterInvocationEvent)).toHaveLength(0)
+    })
+
+    it('defaults an add-only store to a ModelExtractor (extractor route)', async () => {
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()] }, 'add')
-      expect(() => new MemoryManager({ stores: [store] })).toThrow('without an extractor but no addMessages method')
+      // The default ModelExtractor calls the agent's model; the mock returns a JSON array of facts.
+      const model = new MockMessageModel()
+      model.addTurn({ type: 'textBlock', text: '[{"content":"a durable fact"}]' })
+      const mm = new MemoryManager({ stores: [store] })
+      const agent = createMockAgent({ extra: { model: model as unknown as Model } })
+      mm.initAgent(agent)
+
+      await addMessages(agent, userMsg('I like dark mode'))
+      await fireInvocation(agent, mm)
+
+      expect(store.add).toHaveBeenCalledWith('a durable fact', undefined)
+    })
+
+    it('defaults a both-sinks store to the passthrough (no implicit model call)', async () => {
+      const store = createExtractionStore('s', { trigger: [new InvocationTrigger()] }, 'both')
+      const mm = new MemoryManager({ stores: [store] })
+      const agent = createMockAgent()
+      mm.initAgent(agent)
+
+      await addMessages(agent, userMsg('hi'))
+      await fireInvocation(agent, mm)
+
+      expect(store.addMessages).toHaveBeenCalledTimes(1)
+      expect(store.add).not.toHaveBeenCalled()
     })
   })
 
@@ -439,7 +501,7 @@ describe('MemoryManager extraction', () => {
     } {
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()] }, 'addMessages')
       store.addMessages.mockRejectedValue(new Error('backend down'))
-      const coordinator = new ExtractionCoordinator([store], {} as Model)
+      const coordinator = new ExtractionCoordinator([asExtractionStore(store)], {} as Model)
       return { coordinator, store }
     }
 
@@ -488,7 +550,7 @@ describe('MemoryManager extraction', () => {
       const bad = createExtractionStore('bad', { trigger: [new InvocationTrigger()] }, 'addMessages')
       bad.addMessages.mockRejectedValue(new Error('down'))
       const good = createExtractionStore('good', { trigger: [new InvocationTrigger()] }, 'addMessages')
-      const coordinator = new ExtractionCoordinator([bad, good], {} as Model)
+      const coordinator = new ExtractionCoordinator([asExtractionStore(bad), asExtractionStore(good)], {} as Model)
 
       const PROBES = 2
       const requests = SAVE_FAILURES_BEFORE_BACKOFF + BACKOFF_PROBE_INTERVAL * PROBES
@@ -518,7 +580,7 @@ describe('MemoryManager extraction', () => {
     it('flush bypasses backoff and writes the backlog of a recovered store', async () => {
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()] }, 'addMessages')
       store.addMessages.mockRejectedValue(new Error('down'))
-      const coordinator = new ExtractionCoordinator([store], {} as Model)
+      const coordinator = new ExtractionCoordinator([asExtractionStore(store)], {} as Model)
 
       // Drive the store into backoff.
       for (let i = 0; i < SAVE_FAILURES_BEFORE_BACKOFF; i++) {
@@ -547,7 +609,7 @@ describe('MemoryManager extraction', () => {
       // clear the prior failures. We prove that by showing backoff still engages at the threshold.
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()] }, 'addMessages')
       store.addMessages.mockRejectedValue(new Error('down'))
-      const coordinator = new ExtractionCoordinator([store], {} as Model)
+      const coordinator = new ExtractionCoordinator([asExtractionStore(store)], {} as Model)
 
       // One short of backoff.
       for (let i = 0; i < SAVE_FAILURES_BEFORE_BACKOFF - 1; i++) {
