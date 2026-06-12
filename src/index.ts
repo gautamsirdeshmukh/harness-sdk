@@ -310,7 +310,7 @@ export { SandboxTimeoutError, SandboxAbortError, SandboxPathNotFoundError } from
 export type { StreamType, StreamChunk, FileInfo, OutputFile, ExecutionResult } from './sandbox/types.js'
 
 // Middleware system
-export { InvokeModelStage, ExecuteToolStage, AgentStreamStage } from './middleware/index.js'
+export { InvokeModelStage, ExecuteToolStage } from './middleware/index.js'
 export type {
   MiddlewareStage,
   MiddlewareHandler,
@@ -323,8 +323,6 @@ export type {
   InvokeModelResult,
   ExecuteToolContext,
   ExecuteToolResult,
-  AgentStreamContext,
-  AgentStreamResult,
   MiddlewareInterruptResult,
   MiddlewareInterruptible,
 } from './middleware/index.js'

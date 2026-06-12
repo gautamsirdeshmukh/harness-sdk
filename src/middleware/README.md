@@ -56,6 +56,20 @@ Middleware is intended to supersede hooks. The Input/Output phases already cover
 
 `createStage` is not exported from the public API. Only the three built-in stages are public.
 
+## Middleware cannot access or modify model state
+
+`modelState` is intentionally excluded from `InvokeModelContext`. The agent snapshots model state before the middleware chain runs and writes back the model provider's changes after the entire chain completes. Any mutations middleware makes to `agent.modelState` — whether before or after `next()` — are overwritten by this writeback.
+
+We may revisit this later.
+
+## `AgentStreamStage` is internal
+
+`AgentStreamStage` is not exported from the public API. The context for this stage passes `args` and `options` by reference, but the correct contract (copy vs. reference, readonly enforcement) hasn't been finalized. Rather than ship an inconsistent surface, we're keeping it internal until we decide whether `args` should be deep-copied (consistent with `InvokeModelStage.messages`) or remain a reference (simpler, but surprising given the other stages' guarantees).
+
+## `invocationState` is shared by reference
+
+`invocationState` is not copied. Tools and hooks write to it, and those mutations must appear on `AgentResult.invocationState`. The SDK should never write to it directly — the key space belongs to the caller.
+
 ## Middleware cannot resume interrupts
 
 `AgentStreamStage` middleware cannot currently resume tool-level interrupts. Interrupt resolution (`_interruptState.resume()`) runs in `stream()`'s outer loop, outside the middleware chain. When a tool-level interrupt fires, `_stream` catches the `InterruptError` internally and returns a normal `AgentResult` with `stopReason: 'interrupt'` — the middleware sees the result but cannot re-enter the stream with interrupt responses.
