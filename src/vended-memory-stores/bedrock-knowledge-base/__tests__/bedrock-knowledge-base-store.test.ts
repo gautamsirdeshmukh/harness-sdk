@@ -28,7 +28,10 @@ vi.mock('@aws-sdk/client-bedrock-agent', () => ({
     return { send: vi.fn() }
   }),
   IngestKnowledgeBaseDocumentsCommand: vi.fn().mockImplementation(function (input) {
-    return { input }
+    return { input, _command: 'IngestKnowledgeBaseDocuments' }
+  }),
+  GetKnowledgeBaseCommand: vi.fn().mockImplementation(function (input) {
+    return { input, _command: 'GetKnowledgeBase' }
   }),
 }))
 
@@ -52,6 +55,19 @@ function mockClient(): { send: MockedFunction<any> } {
 }
 
 /**
+ * Programs an agent client's `send` to discriminate by command: a {@link GetKnowledgeBaseCommand}
+ * resolves to a knowledge base of `kbType` (driving search-config selection), while everything else
+ * (i.e. ingestion) resolves to `{}`. Defaults to a `VECTOR` knowledge base.
+ */
+function programAgentSend(agent: { send: MockedFunction<any> }, kbType = 'VECTOR'): void {
+  agent.send.mockImplementation((command: any) =>
+    command?._command === 'GetKnowledgeBase'
+      ? Promise.resolve({ knowledgeBase: { knowledgeBaseConfiguration: { type: kbType } } })
+      : Promise.resolve({})
+  )
+}
+
+/**
  * Builds a store from a base connection config plus per-store fields. `config` overrides merge onto
  * the shared connection (`knowledgeBaseId: 'kb-1'` + injected runtime/agent clients); `overrides`
  * carry the per-store fields that sit outside `config` (`name`, `scope`, `writable`, ...). The
@@ -68,7 +84,7 @@ function makeStore(
   const runtime = mockClient()
   runtime.send.mockResolvedValue({ retrievalResults: [] })
   const agent = mockClient()
-  agent.send.mockResolvedValue({})
+  programAgentSend(agent)
   const store = new BedrockKnowledgeBaseStore({
     config: { knowledgeBaseId: 'kb-1', runtimeClient: runtime as any, agentClient: agent as any, ...configOverrides },
     name: 'kb',
@@ -350,6 +366,79 @@ describe('BedrockKnowledgeBaseStore', () => {
       expect(errorSpy).toHaveBeenCalled()
       errorSpy.mockRestore()
     })
+
+    /** Reads the retrievalConfiguration the most recent RetrieveCommand was sent with. */
+    function lastRetrievalConfiguration(runtime: { send: MockedFunction<any> }): any {
+      const calls = runtime.send.mock.calls
+      return calls[calls.length - 1]?.[0].input.retrievalConfiguration
+    }
+
+    it('detects the kind from GetKnowledgeBase using the knowledge base id', async () => {
+      const { store, agent } = makeStore()
+      await store.search('q')
+      const detectCall = agent.send.mock.calls.find((c: any[]) => c[0]?._command === 'GetKnowledgeBase')
+      expect(detectCall?.[0].input).toStrictEqual({ knowledgeBaseId: 'kb-1' })
+    })
+
+    it('queries a managed knowledge base with managedSearchConfiguration', async () => {
+      const { store, runtime, agent } = makeStore()
+      programAgentSend(agent, 'MANAGED')
+      await store.search('q')
+      expect(lastRetrievalConfiguration(runtime)).toStrictEqual({
+        managedSearchConfiguration: { numberOfResults: 10 },
+      })
+    })
+
+    it('carries the scope filter into managedSearchConfiguration', async () => {
+      const { store, runtime, agent } = makeStore({ scope: 'user-123' })
+      programAgentSend(agent, 'MANAGED')
+      await store.search('q')
+      expect(lastRetrievalConfiguration(runtime)).toStrictEqual({
+        managedSearchConfiguration: {
+          numberOfResults: 10,
+          filter: { equals: { key: 'namespace', value: 'user-123' } },
+        },
+      })
+    })
+
+    it('queries a vector knowledge base with vectorSearchConfiguration', async () => {
+      // makeStore reports VECTOR by default.
+      const { store, runtime } = makeStore()
+      await store.search('q')
+      expect(lastRetrievalConfiguration(runtime)).toStrictEqual({
+        vectorSearchConfiguration: { numberOfResults: 10 },
+      })
+    })
+
+    it('treats non-managed types as vector', async () => {
+      const { store, runtime, agent } = makeStore()
+      programAgentSend(agent, 'KENDRA')
+      await store.search('q')
+      expect(lastRetrievalConfiguration(runtime)).toHaveProperty('vectorSearchConfiguration')
+    })
+
+    it('detects the kind once and reuses it across searches', async () => {
+      const { store, agent } = makeStore()
+      programAgentSend(agent, 'MANAGED')
+      await store.search('q')
+      await store.search('q')
+      const detectCalls = agent.send.mock.calls.filter((c: any[]) => c[0]?._command === 'GetKnowledgeBase')
+      expect(detectCalls).toHaveLength(1)
+    })
+
+    it('throws when detection fails', async () => {
+      const { store, agent } = makeStore()
+      agent.send.mockRejectedValue(new Error('AccessDenied'))
+      await expect(store.search('q')).rejects.toThrow('AccessDenied')
+    })
+
+    it('initialize is idempotent', async () => {
+      const { store, agent } = makeStore()
+      await store.initialize()
+      await store.initialize()
+      const detectCalls = agent.send.mock.calls.filter((c: any[]) => c[0]?._command === 'GetKnowledgeBase')
+      expect(detectCalls).toHaveLength(1)
+    })
   })
 
   describe('add — CUSTOM data source', () => {
@@ -461,6 +550,49 @@ describe('BedrockKnowledgeBaseStore', () => {
       })
       await store.add('fact')
       expect(vi.mocked(BedrockAgentClient)).toHaveBeenCalledWith({})
+    })
+
+    it('attaches accessControlList verbatim in inline metadata', async () => {
+      const acl = [{ access: 'ALLOW' as const, name: 'alice@example.com', type: 'USER' }]
+      const { store, agent } = makeCustomStore({ accessControlList: acl })
+      await store.add('fact', { team: 'hr' })
+      const doc = agent.send.mock.calls.find((c: any[]) => c[0]?.input?.documents)?.[0].input.documents[0]
+      expect(doc.metadata.type).toBe('IN_LINE_ATTRIBUTE')
+      expect(doc.metadata.accessControlList).toStrictEqual(acl)
+    })
+
+    it('raises when ACL is set but no inline attributes are present', async () => {
+      const acl = [{ access: 'DENY' as const, name: 'bob@example.com', type: 'USER' }]
+      const { store } = makeCustomStore({ accessControlList: acl })
+      await expect(store.add('fact')).rejects.toThrow('at least one metadata attribute')
+    })
+
+    it('carries both inline attributes and ACL when scope provides an attribute', async () => {
+      const acl = [{ access: 'ALLOW' as const, name: 'alice@example.com', type: 'USER' }]
+      const { store, agent } = makeCustomStore({ scope: 'user-123', accessControlList: acl })
+      await store.add('fact')
+      const doc = agent.send.mock.calls.find((c: any[]) => c[0]?.input?.documents)?.[0].input.documents[0]
+      expect(doc.metadata.accessControlList).toStrictEqual(acl)
+      expect(doc.metadata.inlineAttributes).toStrictEqual([
+        { key: 'namespace', value: { type: 'STRING', stringValue: 'user-123' } },
+      ])
+    })
+
+    it('rewrites a missing-ACL ValidationException to point at the param', async () => {
+      const { store, agent } = makeCustomStore()
+      const err = Object.assign(new Error('accessControlList is required when ACL is enabled'), {
+        name: 'ValidationException',
+      })
+      agent.send.mockRejectedValueOnce(err)
+      await expect(store.add('fact')).rejects.toThrow('accessControlList configured')
+    })
+
+    it('does not rewrite when ACL is already configured', async () => {
+      const acl = [{ access: 'ALLOW' as const, name: 'alice@example.com', type: 'USER' }]
+      const { store, agent } = makeCustomStore({ scope: 'u', accessControlList: acl })
+      const err = Object.assign(new Error('accessControlList is invalid'), { name: 'ValidationException' })
+      agent.send.mockRejectedValueOnce(err)
+      await expect(store.add('fact')).rejects.toThrow('accessControlList is invalid')
     })
   })
 
@@ -612,6 +744,42 @@ describe('BedrockKnowledgeBaseStore', () => {
       expect(agent.send).not.toHaveBeenCalled()
       errorSpy.mockRestore()
     })
+
+    it('writes ACL into the sidecar with capitalized keys', async () => {
+      const acl = [{ access: 'ALLOW' as const, name: 'alice@example.com', type: 'USER' }]
+      const { store, s3 } = makeS3Store({ accessControlList: acl })
+      await store.add('content')
+
+      // The sidecar is the second send; parse it for the ACL.
+      const sidecarCall = s3.send.mock.calls[1]?.[0].input
+      const sidecarBody = JSON.parse(sidecarCall.Body)
+      expect(sidecarBody.accessControlList).toStrictEqual([
+        { Name: 'alice@example.com', Type: 'USER', Access: 'ALLOW' },
+      ])
+    })
+
+    it('writes a sidecar for ACL-only when no scope or metadata', async () => {
+      const acl = [{ access: 'DENY' as const, name: 'bob@example.com', type: 'USER' }]
+      const { store, s3 } = makeS3Store({ accessControlList: acl })
+      await store.add('content')
+
+      expect(s3.send).toHaveBeenCalledTimes(2)
+      const sidecarBody = JSON.parse(s3.send.mock.calls[1]?.[0].input.Body)
+      expect(sidecarBody.metadataAttributes).toStrictEqual({})
+      expect(sidecarBody.accessControlList).toStrictEqual([{ Name: 'bob@example.com', Type: 'USER', Access: 'DENY' }])
+    })
+
+    it('sidecar carries both scope attributes and ACL', async () => {
+      const acl = [{ access: 'ALLOW' as const, name: 'alice@example.com', type: 'USER' }]
+      const { store, s3 } = makeS3Store({ scope: 'team-a', accessControlList: acl })
+      await store.add('content')
+
+      const sidecarBody = JSON.parse(s3.send.mock.calls[1]?.[0].input.Body)
+      expect(sidecarBody.metadataAttributes.namespace.value.stringValue).toBe('team-a')
+      expect(sidecarBody.accessControlList).toStrictEqual([
+        { Name: 'alice@example.com', Type: 'USER', Access: 'ALLOW' },
+      ])
+    })
   })
 
   describe('add — non-writable store', () => {
@@ -630,7 +798,7 @@ describe('BedrockKnowledgeBaseStore', () => {
     it('reuses an injected runtime client across stores built from the same config', async () => {
       const runtime = mockClient()
       runtime.send.mockResolvedValue({ retrievalResults: [] })
-      const config = { knowledgeBaseId: 'kb-1', runtimeClient: runtime as any }
+      const config = { knowledgeBaseId: 'kb-1', knowledgeBaseType: 'VECTOR' as const, runtimeClient: runtime as any }
 
       const personal = new BedrockKnowledgeBaseStore({ config, name: 'personal', scope: 'user-abc' })
       const team = new BedrockKnowledgeBaseStore({ config, name: 'team', scope: 'other' })
@@ -724,7 +892,7 @@ describe('BedrockKnowledgeBaseStore', () => {
 
       const mm = new MemoryManager({ stores: [store] })
       const agent = createMockAgent()
-      mm.initAgent(agent)
+      await mm.initAgent(agent)
 
       // Buffer a turn, then fire the after-invocation hook and flush the background save.
       const message = new Message({ role: 'user', content: [new TextBlock('I like dark mode')] })
@@ -736,8 +904,12 @@ describe('BedrockKnowledgeBaseStore', () => {
 
       expect(extractor.extract).toHaveBeenCalledTimes(1)
       // The fact was ingested via IngestKnowledgeBaseDocuments with the extracted content.
-      expect(agentClient.send).toHaveBeenCalledTimes(1)
-      const document = agentClient.send.mock.calls[0]?.[0].input.documents[0]
+      // First call is GetKnowledgeBase (from initialize), second is IngestKnowledgeBaseDocuments.
+      const ingestCalls = agentClient.send.mock.calls.filter(
+        (c: any[]) => c[0]?._command === 'IngestKnowledgeBaseDocuments'
+      )
+      expect(ingestCalls).toHaveLength(1)
+      const document = ingestCalls[0]?.[0].input.documents[0]
       expect(document.content.custom.inlineContent.textContent.data).toBe('user prefers dark mode')
     })
   })
