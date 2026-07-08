@@ -2658,6 +2658,8 @@ export class Agent implements LocalAgent, InvokableAgent {
         this.messages[lastIndex] = new Message({
           role: 'user',
           content: redactedContent,
+          // Redaction rewrites content but it's the same logical message, so keep its tracking id.
+          trackingId: lastMessage.trackingId,
         })
       } else if (lastMessage) {
         // Unexpected state: redaction requested but last message is not from user
