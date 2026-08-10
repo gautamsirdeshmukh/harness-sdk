@@ -5,16 +5,20 @@ These types are modeled after the Bedrock API.
 - Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_Types_Amazon_Bedrock_Runtime.html
 """
 
+import threading
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from typing_extensions import NotRequired, TypedDict
 
 from .interrupt import _Interruptible
 from .media import DocumentContent, ImageContent
+
+if TYPE_CHECKING:
+    from ..interrupt import _InterruptState
 
 JSONSchema = dict
 """Type alias for JSON Schema dictionaries."""
@@ -151,6 +155,7 @@ class ToolContext(_Interruptible):
                model configuration, and other agent state.
         invocation_state: Caller-provided kwargs that were passed to the agent when it was invoked (agent(),
                           agent.invoke_async(), etc.).
+        cancel_signal: Cooperative cancellation signal scoped to this tool execution.
 
     Note:
         This class is intended to be instantiated by the SDK. Direct construction by users
@@ -160,6 +165,8 @@ class ToolContext(_Interruptible):
     tool_use: ToolUse
     agent: Any  # Agent or BidiAgent - using Any for backwards compatibility
     invocation_state: dict[str, Any]
+    cancel_signal: threading.Event = field(default_factory=threading.Event, compare=False)
+    _interrupt_state_override: "_InterruptState | None" = field(default=None, repr=False, compare=False)
 
     def _interrupt_id(self, name: str) -> str:
         """Unique id for the interrupt.

@@ -45,6 +45,7 @@ import functools
 import inspect
 import json
 import logging
+import threading
 from collections.abc import Callable
 from typing import (
     Annotated,
@@ -407,8 +408,17 @@ class FunctionToolMetadata:
                               agent.invoke_async(), etc.).
         """
         if self._context_param and self._context_param in self.signature.parameters:
+            from .executors._executor import _get_current_tool_execution_context
+
+            execution_context = _get_current_tool_execution_context()
             tool_context = ToolContext(
-                tool_use=tool_use, agent=invocation_state["agent"], invocation_state=invocation_state
+                tool_use=tool_use,
+                agent=invocation_state["agent"],
+                invocation_state=invocation_state,
+                cancel_signal=execution_context.cancel_signal
+                if execution_context
+                else getattr(invocation_state["agent"], "_cancel_signal", threading.Event()),
+                _interrupt_state_override=execution_context.interrupt_state if execution_context else None,
             )
             validated_input[self._context_param] = tool_context
 

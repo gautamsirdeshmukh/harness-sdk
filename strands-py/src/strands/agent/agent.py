@@ -10,8 +10,11 @@ The Agent interface supports two complementary interaction patterns:
 """
 
 import copy
+import inspect
 import logging
+import sys
 import threading
+import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
@@ -26,10 +29,13 @@ from typing import (
 )
 
 from opentelemetry import trace as trace_api
+from opentelemetry.trace import SpanContext
 from pydantic import BaseModel
 
 from .. import _identifier
 from .._async import run_async
+from ..background_tasks import BackgroundTasks, BackgroundTasksConfig
+from ..background_tasks._background_tasks import _BackgroundTasks
 from ..event_loop._retry import ModelRetryStrategy
 from ..event_loop.event_loop import INITIAL_DELAY, MAX_ATTEMPTS, MAX_DELAY, event_loop_cycle
 from ..experimental.checkpoint import Checkpoint, CheckpointPosition
@@ -57,6 +63,7 @@ from ..hooks import (
     HookRegistry,
     MessageAddedEvent,
 )
+from ..hooks.events import _ContinuationIntent
 from ..hooks.registry import TEvent
 from ..interrupt import InterruptException, _InterruptState
 from ..interventions.handler import InterventionHandler
@@ -71,15 +78,23 @@ from ..sandbox import Sandbox
 from ..sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from ..session.session_manager import SessionManager
 from ..storage import Storage
-from ..telemetry.metrics import EventLoopMetrics
+from ..telemetry.metrics import EventLoopMetrics, Trace
 from ..telemetry.tracer import get_tracer, serialize
 from ..tools._caller import _ToolCaller
 from ..tools.executors import ConcurrentToolExecutor
-from ..tools.executors._executor import ToolExecutor
+from ..tools.executors._executor import ToolExecutor, _tool_execution_context, _ToolExecutionContext
 from ..tools.registry import ToolRegistry
 from ..tools.structured_output._structured_output_context import StructuredOutputContext
 from ..tools.watcher import ToolWatcher
-from ..types._events import AgentResultEvent, EventLoopStopEvent, InitEventLoopEvent, ModelStreamChunkEvent, TypedEvent
+from ..types._events import (
+    AgentResultEvent,
+    EventLoopStopEvent,
+    InitEventLoopEvent,
+    ModelStreamChunkEvent,
+    ToolInterruptEvent,
+    ToolResultEvent,
+    TypedEvent,
+)
 from ..types.agent import AgentInput, ConcurrentInvocationMode, Limits
 from ..types.content import (
     ContentBlock,
@@ -90,7 +105,7 @@ from ..types.content import (
     split_system_prompt,
 )
 from ..types.exceptions import ConcurrencyException, ContextWindowOverflowException
-from ..types.tools import AgentTool
+from ..types.tools import AgentTool, ToolResult, ToolUse
 from ..types.traces import AttributeValue
 from ._agent_as_tool import _AgentAsTool
 from ._concurrency import _ConcurrencyController
@@ -198,6 +213,7 @@ class Agent(AgentBase):
         state: AgentState | dict | None = None,
         context_manager: ContextManagerStrategy | None = None,
         plugins: list[Plugin] | None = None,
+        background_tasks: bool | BackgroundTasksConfig | None = None,
         hooks: list[HookProvider | HookCallback] | None = None,
         interventions: list[InterventionHandler] | None = None,
         session_manager: SessionManager | None = None,
@@ -269,6 +285,8 @@ class Agent(AgentBase):
                 Plugins are initialized with the agent instance after construction and can register hooks,
                 modify agent attributes, or perform other setup tasks.
                 Defaults to None.
+            background_tasks: Enable model-driven background tool execution with defaults by passing ``True``,
+                or provide a :class:`~strands.background_tasks.BackgroundTasksConfig`. Defaults to None (disabled).
             hooks: Hooks to be added to the agent hook registry. Accepts HookProvider instances
                 or plain callable hook callbacks (functions with typed event parameters).
                 Defaults to None.
@@ -520,6 +538,19 @@ class Agent(AgentBase):
 
         # Register built-in plugins
         self._plugin_registry.add_and_init(_ModelPlugin())
+
+        self._background_tasks: _BackgroundTasks | None = None
+        self.background_tasks: BackgroundTasks | None = None
+        if background_tasks is not None and background_tasks is not False:
+            if background_tasks is True:
+                background_tasks_config = None
+            elif isinstance(background_tasks, dict):
+                background_tasks_config = background_tasks
+            else:
+                raise TypeError("background_tasks must be True, False, a BackgroundTasksConfig, or None")
+            self._background_tasks = _BackgroundTasks(background_tasks_config)
+            self._plugin_registry.add_and_init(self._background_tasks)
+            self.background_tasks = self._background_tasks.control
 
         plugins_to_register = resolved_plugins if resolved_plugins is not None else plugins
         if plugins_to_register:
@@ -1061,9 +1092,15 @@ class Agent(AgentBase):
         such as MCP clients. It should be called when the agent is no longer needed
         to ensure proper resource cleanup.
 
-        Note: This method uses a "belt and braces" approach with automatic cleanup
-        through finalizers as a fallback, but explicit cleanup is recommended.
+        Tool providers may register finalizers as a fallback, but explicit cleanup
+        is required to stop active background work predictably.
+
         """
+        if self._background_tasks is not None and not sys.is_finalizing():
+            try:
+                self._background_tasks.shutdown()
+            except Exception as error:
+                logger.warning("error=<%s> | background task cleanup failed", error)
         self.tool_registry.cleanup()
 
     def add_hook(
@@ -1323,143 +1360,370 @@ class Agent(AgentBase):
             Events from the event loop cycle.
         """
         current_messages: Messages | None = messages
+        continuation_intents: list[_ContinuationIntent] = []
+        pending_event_continuations: list[_ContinuationIntent] = []
 
-        while current_messages is not None:
-            before_invocation_event, _interrupts = await self.hooks.invoke_callbacks_async(
-                BeforeInvocationEvent(agent=self, invocation_state=invocation_state, messages=current_messages)
-            )
-
-            if before_invocation_event.cancel:
-                cancel_text = (
-                    before_invocation_event.cancel
-                    if isinstance(before_invocation_event.cancel, str)
-                    else "invocation denied by hook"
-                )
-                cancel_message: Message = {"role": "assistant", "content": [{"text": cancel_text}]}
-                await self._append_messages(cancel_message)
-                yield EventLoopStopEvent(
-                    "end_turn", cancel_message, self.event_loop_metrics, invocation_state.get("request_state", {})
-                )
-                await self.hooks.invoke_callbacks_async(
-                    AfterInvocationEvent(agent=self, invocation_state=invocation_state)
-                )
-                return
-
-            current_messages = (
-                before_invocation_event.messages if before_invocation_event.messages is not None else current_messages
-            )
-
-            agent_result: AgentResult | None = None
-            try:
-                yield InitEventLoopEvent()
-
-                # Backfill ids for any messages that entered history outside the append chokepoint
-                # (e.g. a caller doing agent.messages.append(...) directly, or a legacy session
-                # restored without ids), so every message carries one before the model is called.
-                for message in self.messages:
-                    _ensure_tracking_id(message)
-
-                await self._append_messages(*current_messages)
-
-                structured_output_context = StructuredOutputContext(
-                    structured_output_model or self._default_structured_output_model,
-                    structured_output_prompt=structured_output_prompt or self._structured_output_prompt,
-                )
-
-                pass_progress = _PassProgress()
-                middleware_context = AgentStreamContext(
+        try:
+            while current_messages is not None:
+                pass_id = str(uuid.uuid4())
+                before_invocation_event = BeforeInvocationEvent(
                     agent=self,
-                    messages=current_messages,
                     invocation_state=invocation_state,
-                    # Snapshot interrupts before the pass so a gate's re-read after next_fn
-                    # survives the tool cycle clearing the live dict. Empty when not activated,
-                    # so a dead cycle's retained response cannot resolve a fresh gate.
-                    _interrupts=dict(self._interrupt_state.interrupts) if self._interrupt_state.activated else {},
+                    messages=current_messages,
                 )
                 try:
-                    async for event in self._middleware_registry.invoke(
-                        AgentStreamStage,
-                        middleware_context,
-                        self._make_agent_stream_terminal(structured_output_context, limits, pass_progress),
-                    ):
-                        if isinstance(event, EventLoopStopEvent):
-                            agent_result = AgentResult(*event["stop"])
-                        yield event
+                    await self.hooks.invoke_callbacks_async(before_invocation_event)
+                except BaseException as error:
+                    active_intents, continuation_intents = continuation_intents, []
+                    await self._reject_continuations(active_intents, error)
+                    raise
 
-                    # A resumed AgentStreamStage interrupt that finished without tool execution
-                    # never hits the tool path's deactivate(), so clear the interrupt state here.
-                    if (
-                        self._interrupt_state.activated
-                        and (agent_result is None or agent_result.stop_reason != "interrupt")
-                        and not self._interrupt_state.has_pending_tool_execution
-                    ):
-                        self._interrupt_state.deactivate()
-                except InterruptException as interrupt_exception:
-                    # Refuse a late interrupt — resuming would re-call the model
-                    # and corrupt history.
-                    if (
-                        pass_progress.event_loop_produced_result
-                        and not self._interrupt_state.has_pending_tool_execution
-                    ):
-                        self._interrupt_state.deactivate()
-                        raise RuntimeError(
-                            f"interrupt_name=<{interrupt_exception.interrupt.name}> | agent-stream middleware "
-                            "interrupted after the pass produced its result | interrupt before the pass "
-                            "produces its assistant turn"
-                        ) from interrupt_exception
-
-                    registered = self._interrupt_state.interrupts.get(interrupt_exception.interrupt.id)
-                    if registered is None or registered.response is not None:
-                        self._interrupt_state.interrupts[interrupt_exception.interrupt.id] = (
-                            interrupt_exception.interrupt
-                        )
-                    self._interrupt_state.activate()
-                    interrupt_message: Message = (
-                        self.messages[-1]
-                        if self.messages
-                        else {"role": "assistant", "content": [{"text": "Interrupted"}]}
+                if before_invocation_event.cancel:
+                    cancel_text = (
+                        before_invocation_event.cancel
+                        if isinstance(before_invocation_event.cancel, str)
+                        else "invocation denied by hook"
                     )
-                    # Surface all unanswered interrupts so the caller can build a complete resume payload.
-                    unanswered = [
-                        interrupt
-                        for interrupt in self._interrupt_state.interrupts.values()
-                        if interrupt.response is None
-                    ]
-                    stop_event = EventLoopStopEvent(
-                        "interrupt",
-                        interrupt_message,
+                    cancel_message: Message = {"role": "assistant", "content": [{"text": cancel_text}]}
+                    await self._append_messages(cancel_message)
+                    yield EventLoopStopEvent(
+                        "end_turn",
+                        cancel_message,
                         self.event_loop_metrics,
                         invocation_state.get("request_state", {}),
-                        unanswered,
                     )
-                    agent_result = AgentResult(*stop_event["stop"])
-                    yield stop_event
 
-            finally:
-                if not self._interrupt_state.activated:
-                    self._interrupt_state.end_interrupt_cycle()
+                    cancel_after_invocation_event = AfterInvocationEvent(
+                        agent=self,
+                        invocation_state=invocation_state,
+                    )
+                    try:
+                        await self.hooks.invoke_callbacks_async(cancel_after_invocation_event)
+                    except BaseException as error:
+                        pending_event_continuations = cancel_after_invocation_event._get_continuations()
+                        active_intents, continuation_intents = continuation_intents, []
+                        try:
+                            await self._reject_continuations(pending_event_continuations, error)
+                            await self._reject_continuations(active_intents, error)
+                        finally:
+                            pending_event_continuations = []
+                        raise
 
-                self.conversation_manager.apply_management(self)
-                after_invocation_event, _interrupts = await self.hooks.invoke_callbacks_async(
-                    AfterInvocationEvent(agent=self, invocation_state=invocation_state, result=agent_result)
+                    cancel_reason = RuntimeError("Invocation cancelled by hook")
+                    pending_event_continuations = cancel_after_invocation_event._get_continuations()
+                    active_intents, continuation_intents = continuation_intents, []
+                    try:
+                        await self._reject_continuations(pending_event_continuations, cancel_reason)
+                        await self._reject_continuations(active_intents, cancel_reason)
+                    finally:
+                        pending_event_continuations = []
+                    return
+
+                current_messages = (
+                    before_invocation_event.messages
+                    if before_invocation_event.messages is not None
+                    else current_messages
+                )
+                has_deferred_result = any(intent["phase"] == "deferred_result" for intent in continuation_intents)
+                staged_continuation_messages = current_messages if has_deferred_result else None
+                continuation_selected = not has_deferred_result
+
+                def mark_continuation_selected() -> None:
+                    nonlocal continuation_selected
+                    continuation_selected = True
+
+                agent_result: AgentResult | None = None
+                event_loop_result: AgentResult | None = None
+                replacement_stop_event: EventLoopStopEvent | None = None
+                caught_error: BaseException | None = None
+                after_invocation_event: AfterInvocationEvent
+                try:
+                    yield InitEventLoopEvent()
+
+                    # Backfill ids for any messages that entered history outside the append chokepoint
+                    # (e.g. a caller doing agent.messages.append(...) directly, or a legacy session
+                    # restored without ids), so every message carries one before the model is called.
+                    for message in self.messages:
+                        _ensure_tracking_id(message)
+
+                    if staged_continuation_messages is None:
+                        await self._append_messages(*current_messages)
+
+                    structured_output_context = StructuredOutputContext(
+                        structured_output_model or self._default_structured_output_model,
+                        structured_output_prompt=structured_output_prompt or self._structured_output_prompt,
+                    )
+
+                    pass_progress = _PassProgress()
+                    middleware_context = AgentStreamContext(
+                        agent=self,
+                        messages=current_messages,
+                        invocation_state=invocation_state,
+                        _interrupts=(dict(self._interrupt_state.interrupts) if self._interrupt_state.activated else {}),
+                    )
+                    try:
+                        async for event in self._middleware_registry.invoke(
+                            AgentStreamStage,
+                            middleware_context,
+                            self._make_agent_stream_terminal(
+                                structured_output_context,
+                                limits,
+                                pass_progress,
+                                pass_id=pass_id,
+                                staged_continuation_messages=staged_continuation_messages,
+                                continuation_intents=continuation_intents,
+                                on_continuation_selected=mark_continuation_selected,
+                            ),
+                        ):
+                            if isinstance(event, EventLoopStopEvent):
+                                agent_result = AgentResult(*event["stop"])
+                                event_loop_result = agent_result
+                            yield event
+
+                        if (
+                            self._interrupt_state.activated
+                            and (agent_result is None or agent_result.stop_reason != "interrupt")
+                            and not self._interrupt_state.has_pending_tool_execution
+                        ):
+                            self._interrupt_state.deactivate()
+                    except InterruptException as interrupt_exception:
+                        if (
+                            pass_progress.event_loop_produced_result
+                            and not self._interrupt_state.has_pending_tool_execution
+                        ):
+                            self._interrupt_state.deactivate()
+                            raise RuntimeError(
+                                f"interrupt_name=<{interrupt_exception.interrupt.name}> | agent-stream middleware "
+                                "interrupted after the pass produced its result | interrupt before the pass "
+                                "produces its assistant turn"
+                            ) from interrupt_exception
+
+                        registered = self._interrupt_state.interrupts.get(interrupt_exception.interrupt.id)
+                        if registered is None or registered.response is not None:
+                            self._interrupt_state.interrupts[interrupt_exception.interrupt.id] = (
+                                interrupt_exception.interrupt
+                            )
+                        self._interrupt_state.activate()
+                        interrupt_message: Message = (
+                            self.messages[-1]
+                            if self.messages
+                            else {"role": "assistant", "content": [{"text": "Interrupted"}]}
+                        )
+                        unanswered = [
+                            interrupt
+                            for interrupt in self._interrupt_state.interrupts.values()
+                            if interrupt.response is None
+                        ]
+                        stop_event = EventLoopStopEvent(
+                            "interrupt",
+                            interrupt_message,
+                            self.event_loop_metrics,
+                            invocation_state.get("request_state", {}),
+                            unanswered,
+                        )
+                        agent_result = AgentResult(*stop_event["stop"])
+                        event_loop_result = agent_result
+                        yield stop_event
+
+                except BaseException as error:
+                    caught_error = error
+                finally:
+                    if not self._interrupt_state.activated:
+                        self._interrupt_state.end_interrupt_cycle()
+
+                    after_invocation_event = AfterInvocationEvent(
+                        agent=self,
+                        invocation_state=invocation_state,
+                        result=agent_result,
+                    )
+                    try:
+                        self.conversation_manager.apply_management(self)
+                        await self.hooks.invoke_callbacks_async(after_invocation_event)
+                        agent_result = after_invocation_event.result
+                    except BaseException as error:
+                        if caught_error is None:
+                            caught_error = error
+                        else:
+                            logger.warning(
+                                "error=<%s> | after invocation cleanup failed",
+                                error,
+                            )
+
+                    active_intents, continuation_intents = continuation_intents, []
+                    try:
+                        if agent_result is not None and caught_error is None and continuation_selected:
+                            await self._commit_continuations(active_intents)
+                        else:
+                            continuation_reason = caught_error or RuntimeError(
+                                "Agent stream closed before continuation consumption"
+                            )
+                            await self._reject_continuations(active_intents, continuation_reason)
+                    except BaseException as error:
+                        if caught_error is None:
+                            caught_error = error
+                        else:
+                            logger.warning(
+                                "error=<%s> | continuation cleanup failed",
+                                error,
+                            )
+
+                    if (
+                        caught_error is None
+                        and event_loop_result is not None
+                        and agent_result is not None
+                        and event_loop_result.stop_reason != "interrupt"
+                        and agent_result.stop_reason == "interrupt"
+                    ):
+                        replacement_stop_event = EventLoopStopEvent(
+                            agent_result.stop_reason,
+                            agent_result.message,
+                            agent_result.metrics,
+                            agent_result.state,
+                            agent_result.interrupts,
+                            agent_result.structured_output,
+                            agent_result.checkpoint,
+                        )
+
+                if replacement_stop_event is not None:
+                    yield replacement_stop_event
+
+                next_intents = after_invocation_event._get_continuations()
+                if caught_error is not None:
+                    pending_event_continuations = next_intents
+                    try:
+                        await self._reject_continuations(next_intents, caught_error)
+                    finally:
+                        pending_event_continuations = []
+                    raise caught_error
+
+                pending_event_continuations = next_intents
+                try:
+                    next_messages = await self._prepare_continuations(next_intents)
+                finally:
+                    pending_event_continuations = []
+
+                if next_messages is None:
+                    current_messages = None
+                else:
+                    logger.debug(
+                        "continuation_count=<%s> | hook requested agent continuation",
+                        len(next_intents),
+                    )
+                    continuation_intents = next_intents
+                    current_messages = next_messages
+        finally:
+            reason = RuntimeError("Agent stream closed before continuation consumption")
+            for intents in (pending_event_continuations, continuation_intents):
+                if not intents:
+                    continue
+                try:
+                    await self._reject_continuations(intents, reason)
+                except BaseException as error:
+                    logger.warning(
+                        "error=<%s> | agent stream continuation cleanup failed",
+                        error,
+                    )
+
+    async def _prepare_continuations(
+        self,
+        intents: list[_ContinuationIntent],
+    ) -> Messages | None:
+        """Normalize and accept one continuation batch."""
+        if not intents:
+            return None
+
+        messages: Messages = []
+        interrupt_response_intent: _ContinuationIntent | None = None
+        try:
+            has_unanswered_interrupt = any(
+                interrupt.response is None for interrupt in self._interrupt_state.interrupts.values()
+            )
+            if self._interrupt_state.activated and has_unanswered_interrupt:
+                if len(intents) != 1:
+                    raise TypeError("Interrupt-response continuations cannot be combined with message continuations")
+                interrupt_response_intent = intents[0]
+                self._interrupt_state.resume(interrupt_response_intent["input"])
+
+            for intent in intents:
+                if intent is interrupt_response_intent:
+                    continue
+                messages.extend(
+                    await self._convert_prompt_to_messages(
+                        intent["input"],
+                        allow_during_interrupt=True,
+                    )
                 )
 
-            # Convert resume input to messages for next iteration, or None to stop
-            if after_invocation_event.resume is not None:
-                logger.debug("resume=<True> | hook requested agent resume with new input")
-                # If in interrupt state, process interrupt responses before continuing.
-                # This mirrors the _interrupt_state.resume() call in stream_async and will
-                # raise TypeError if the resume input is not valid interrupt responses.
-                self._interrupt_state.resume(after_invocation_event.resume)
-                current_messages = await self._convert_prompt_to_messages(after_invocation_event.resume)
-            else:
-                current_messages = None
+            if not messages and not self._interrupt_state.activated and self._checkpoint is None:
+                raise TypeError("Continuation must append at least one message")
+
+            for intent in intents:
+                callback = intent.get("on_accepted")
+                if callback is None:
+                    continue
+                result = callback()
+                if inspect.isawaitable(result):
+                    await result
+        except BaseException as error:
+            await self._reject_continuations(intents, error)
+            raise
+
+        return messages
+
+    async def _select_continuations(
+        self,
+        intents: list[_ContinuationIntent],
+        model_messages: Messages,
+    ) -> None:
+        """Notify continuation owners that a model request consumed their input."""
+        for intent in intents:
+            callback = intent.get("on_selected")
+            if callback is None:
+                continue
+            result = callback(model_messages)
+            if inspect.isawaitable(result):
+                await result
+
+    async def _commit_continuations(self, intents: list[_ContinuationIntent]) -> None:
+        """Notify continuation owners that their pass completed successfully."""
+        for intent in intents:
+            callback = intent.get("on_committed")
+            if callback is None:
+                continue
+            result = callback()
+            if inspect.isawaitable(result):
+                await result
+
+    async def _reject_continuations(
+        self,
+        intents: list[_ContinuationIntent],
+        reason: object,
+    ) -> None:
+        """Reject every continuation in a batch, even when a callback fails."""
+        errors: list[BaseException] = []
+        for intent in intents:
+            callback = intent.get("on_rejected")
+            if callback is None:
+                continue
+            try:
+                result = callback(reason)
+                if inspect.isawaitable(result):
+                    await result
+            except BaseException as error:
+                errors.append(error)
+        if errors:
+            raise RuntimeError(f"{len(errors)} continuation rejection callback(s) failed") from errors[0]
 
     def _make_agent_stream_terminal(
         self,
         structured_output_context: StructuredOutputContext,
         limits: Limits | None,
         pass_progress: _PassProgress,
+        *,
+        pass_id: str,
+        staged_continuation_messages: Messages | None,
+        continuation_intents: list[_ContinuationIntent],
+        on_continuation_selected: Callable[[], None],
     ) -> Callable[["AgentStreamContext"], AsyncGenerator[TypedEvent, None]]:
         """Build the terminal for the AgentStreamStage middleware chain.
 
@@ -1475,6 +1739,10 @@ class Agent(AgentBase):
             limits: Optional per-invocation budget caps.
             pass_progress: Records whether the event loop produced this pass's result, which
                 determines whether resuming the pass would call the model again.
+            pass_id: Stable identifier for background-task admission within this pass.
+            staged_continuation_messages: Deferred continuation input for the first model request.
+            continuation_intents: Owners of the staged continuation input.
+            on_continuation_selected: Callback invoked when the model consumes staged input.
 
         Returns:
             An async generator function yielding the pass's events, ending with an
@@ -1482,8 +1750,15 @@ class Agent(AgentBase):
         """
 
         async def terminal(ctx: "AgentStreamContext") -> AsyncGenerator[TypedEvent, None]:
-            # Execute the event loop cycle with retry logic for context limits
-            events = self._execute_event_loop_cycle(ctx.invocation_state, structured_output_context, limits)
+            events = self._execute_event_loop_cycle(
+                ctx.invocation_state,
+                structured_output_context,
+                limits,
+                pass_id=pass_id,
+                staged_continuation_messages=staged_continuation_messages,
+                continuation_intents=continuation_intents,
+                on_continuation_selected=on_continuation_selected,
+            )
             async for event in events:
                 if isinstance(event, EventLoopStopEvent):
                     pass_progress.event_loop_produced_result = True
@@ -1511,6 +1786,11 @@ class Agent(AgentBase):
         invocation_state: dict[str, Any],
         structured_output_context: StructuredOutputContext | None = None,
         limits: Limits | None = None,
+        *,
+        pass_id: str | None = None,
+        staged_continuation_messages: Messages | None = None,
+        continuation_intents: list[_ContinuationIntent] | None = None,
+        on_continuation_selected: Callable[[], None] | None = None,
     ) -> AsyncGenerator[TypedEvent, None]:
         """Execute the event loop cycle with retry logic for context window limits.
 
@@ -1522,6 +1802,10 @@ class Agent(AgentBase):
             invocation_state: Additional parameters to pass to the event loop.
             structured_output_context: Optional structured output context for this invocation.
             limits: Optional per-invocation budget caps. See :class:`~strands.types.agent.Limits`.
+            pass_id: Stable identifier for background-task admission deduplication within this pass.
+            staged_continuation_messages: Deferred continuation input for the first model request.
+            continuation_intents: Owners of the staged continuation input.
+            on_continuation_selected: Callback invoked once the model request consumes staged input.
 
         Yields:
             Events of the loop cycle.
@@ -1533,14 +1817,27 @@ class Agent(AgentBase):
             structured_output_context.register_tool(self.tool_registry)
 
         try:
-            events = event_loop_cycle(
-                agent=self,
-                invocation_state=invocation_state,
-                structured_output_context=structured_output_context,
-                limits=limits,
+            origin_span_context = self.trace_span.get_span_context() if self.trace_span is not None else None
+            execution_context = _ToolExecutionContext(
+                cancel_signal=self._cancel_signal,
+                interrupt_state=self._interrupt_state,
+                route_background=True,
+                event_loop_metrics=self.event_loop_metrics,
+                pass_id=pass_id,
+                origin_span_context=origin_span_context,
             )
-            async for event in events:
-                yield event
+            with _tool_execution_context(execution_context):
+                events = event_loop_cycle(
+                    agent=self,
+                    invocation_state=invocation_state,
+                    structured_output_context=structured_output_context,
+                    limits=limits,
+                    staged_continuation_messages=staged_continuation_messages,
+                    continuation_intents=continuation_intents,
+                    on_continuation_selected=on_continuation_selected,
+                )
+                async for event in events:
+                    yield event
 
         except ContextWindowOverflowException as e:
             # Try reducing the context size and retrying
@@ -1550,13 +1847,81 @@ class Agent(AgentBase):
             if self._session_manager:
                 self._session_manager.sync_agent(self)
 
-            events = self._execute_event_loop_cycle(invocation_state, structured_output_context, limits)
+            events = self._execute_event_loop_cycle(
+                invocation_state,
+                structured_output_context,
+                limits,
+                pass_id=pass_id,
+                staged_continuation_messages=staged_continuation_messages,
+                continuation_intents=continuation_intents,
+                on_continuation_selected=on_continuation_selected,
+            )
             async for event in events:
                 yield event
 
         finally:
             if structured_output_context:
                 structured_output_context.cleanup(self.tool_registry)
+
+    async def _execute_detached_tool(
+        self,
+        *,
+        tool_use: ToolUse,
+        invocation_state: dict[str, Any],
+        cancel_signal: threading.Event,
+        interrupt_state: dict[str, Any] | None,
+        task_id: str,
+        origin_span_context: SpanContext | None,
+    ) -> dict[str, Any]:
+        """Execute one background tool through the normal hook and middleware lifecycle."""
+        restored_interrupt_state = (
+            _InterruptState.from_dict(copy.deepcopy(interrupt_state))
+            if interrupt_state is not None
+            else _InterruptState()
+        )
+        metrics = EventLoopMetrics()
+        metrics.reset_usage_metrics()
+        execution_context = _ToolExecutionContext(
+            cancel_signal=cancel_signal,
+            interrupt_state=restored_interrupt_state,
+            route_background=False,
+            event_loop_metrics=metrics,
+            origin_span_context=origin_span_context,
+            background_task_id=task_id,
+        )
+        tool_results: list[ToolResult] = []
+        detached_result: ToolResult | None = None
+
+        if cancel_signal.is_set():
+            return {
+                "result": {
+                    "toolUseId": tool_use["toolUseId"],
+                    "status": "error",
+                    "content": [{"text": "Tool execution cancelled"}],
+                }
+            }
+
+        with _tool_execution_context(execution_context):
+            cycle_trace = Trace("Background task")
+            async for event in self.tool_executor._execute(
+                self,
+                [tool_use],
+                tool_results,
+                cycle_trace,
+                trace_api.get_current_span(),
+                invocation_state,
+            ):
+                if isinstance(event, ToolInterruptEvent):
+                    for interrupt in event.interrupts:
+                        restored_interrupt_state.interrupts.setdefault(interrupt.id, interrupt)
+                    restored_interrupt_state.activate()
+                    return {"interrupt_state": restored_interrupt_state.to_dict()}
+                if isinstance(event, ToolResultEvent):
+                    detached_result = event.tool_result
+
+        if detached_result is None:
+            raise RuntimeError("Detached tool execution produced no ToolResult")
+        return {"result": detached_result}
 
     def _try_consume_checkpoint_resume(self, prompt: Any) -> bool:
         """Consume a ``checkpointResume`` prompt block, returning True if found.
@@ -1581,8 +1946,13 @@ class Agent(AgentBase):
         self._checkpoint = Checkpoint.from_dict(payload["checkpoint"])
         return True
 
-    async def _convert_prompt_to_messages(self, prompt: AgentInput) -> Messages:
-        if self._interrupt_state.activated:
+    async def _convert_prompt_to_messages(
+        self,
+        prompt: AgentInput,
+        *,
+        allow_during_interrupt: bool = False,
+    ) -> Messages:
+        if self._interrupt_state.activated and not allow_during_interrupt:
             return []
 
         if self._try_consume_checkpoint_resume(prompt):
@@ -1713,6 +2083,14 @@ class Agent(AgentBase):
             self.messages.append(message)
             await self.hooks.invoke_callbacks_async(MessageAddedEvent(agent=self, message=message))
 
+    async def _append_messages_atomically(self, *messages: Message) -> None:
+        """Append a complete batch before invoking per-message callbacks."""
+        for message in messages:
+            _ensure_tracking_id(message)
+        self.messages.extend(messages)
+        for message in messages:
+            await self.hooks.invoke_callbacks_async(MessageAddedEvent(agent=self, message=message))
+
     def take_snapshot(
         self,
         *,
@@ -1780,6 +2158,8 @@ class Agent(AgentBase):
             self.messages = copy.deepcopy(data["messages"])
         if "state" in data:
             self.state = AgentState(data["state"])
+            if self._background_tasks is not None:
+                self._background_tasks.app_state_loaded()
         if "conversation_manager_state" in data:
             self.conversation_manager.restore_from_session(data["conversation_manager_state"])
         if "interrupt_state" in data:

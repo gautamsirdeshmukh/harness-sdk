@@ -7,6 +7,15 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TypeVar
 
 T = TypeVar("T")
+_SYNC_BRIDGE_ACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "strands_sync_bridge_active",
+    default=False,
+)
+
+
+def _is_sync_bridge_active() -> bool:
+    """Return whether execution entered through the synchronous async bridge."""
+    return _SYNC_BRIDGE_ACTIVE.get()
 
 
 def run_async(async_func: Callable[[], Awaitable[T]]) -> T:
@@ -23,7 +32,11 @@ def run_async(async_func: Callable[[], Awaitable[T]]) -> T:
     """
 
     async def execute_async() -> T:
-        return await async_func()
+        token = _SYNC_BRIDGE_ACTIVE.set(True)
+        try:
+            return await async_func()
+        finally:
+            _SYNC_BRIDGE_ACTIVE.reset(token)
 
     def execute() -> T:
         return asyncio.run(execute_async())

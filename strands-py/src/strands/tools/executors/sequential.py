@@ -8,7 +8,7 @@ from typing_extensions import override
 from ...telemetry.metrics import Trace
 from ...types._events import ToolInterruptEvent, ToolResultEvent, TypedEvent
 from ...types.tools import ToolResult, ToolUse
-from ._executor import ToolExecutor
+from ._executor import ToolExecutor, _get_current_tool_execution_context
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...agent import Agent
@@ -46,9 +46,11 @@ class SequentialToolExecutor(ToolExecutor):
             Events from the tool execution stream.
         """
         interrupted = False
+        execution_context = _get_current_tool_execution_context()
+        cancel_signal = execution_context.cancel_signal if execution_context is not None else agent._cancel_signal
 
         for tool_use in tool_uses:
-            if agent._cancel_signal.is_set():
+            if cancel_signal.is_set():
                 cancel_result: ToolResult = {
                     "toolUseId": str(tool_use.get("toolUseId")),
                     "status": "error",

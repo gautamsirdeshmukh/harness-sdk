@@ -5,23 +5,29 @@ thread pools, etc.).
 """
 
 import abc
+import contextvars
 import logging
+import threading
 import time
-from collections.abc import AsyncGenerator
+import uuid
+from collections.abc import AsyncGenerator, Generator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry import trace as trace_api
+from opentelemetry.trace import SpanContext
 
 from ..._middleware.stages import ExecuteToolContext, ExecuteToolStage
 from ...experimental.hooks.events import BidiAfterToolCallEvent, BidiBeforeToolCallEvent
 from ...hooks import AfterToolCallEvent, BeforeToolCallEvent
-from ...interrupt import InterruptException
-from ...telemetry.metrics import Trace
+from ...interrupt import InterruptException, _InterruptState
+from ...telemetry.metrics import EventLoopMetrics, Trace
 from ...telemetry.tracer import get_tracer, serialize
 from ...types._events import ToolCancelEvent, ToolInterruptEvent, ToolResultEvent, ToolStreamEvent, TypedEvent
 from ...types.content import Message
 from ...types.interrupt import Interrupt
-from ...types.tools import ToolChoice, ToolChoiceAuto, ToolConfig, ToolResult, ToolUse
+from ...types.tools import ToolChoice, ToolChoiceAuto, ToolConfig, ToolResult, ToolSpec, ToolUse
 from ..structured_output._structured_output_context import StructuredOutputContext
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -29,6 +35,69 @@ if TYPE_CHECKING:  # pragma: no cover
     from ...experimental.bidi import BidiAgent
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ToolExecutionContext:
+    """Execution-scoped state that must not be read from the mutable Agent."""
+
+    cancel_signal: threading.Event
+    interrupt_state: _InterruptState
+    route_background: bool = True
+    event_loop_metrics: EventLoopMetrics | None = None
+    pass_id: str | None = None
+    origin_span_context: SpanContext | None = None
+    background_task_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.route_background and self.pass_id is None:
+            object.__setattr__(self, "pass_id", str(uuid.uuid4()))
+
+
+_CURRENT_TOOL_EXECUTION_CONTEXT: contextvars.ContextVar[_ToolExecutionContext | None] = contextvars.ContextVar(
+    "strands_tool_execution_context",
+    default=None,
+)
+
+
+def _get_current_tool_execution_context() -> _ToolExecutionContext | None:
+    """Return the execution context for the current tool coroutine."""
+    return _CURRENT_TOOL_EXECUTION_CONTEXT.get()
+
+
+@contextmanager
+def _tool_execution_context(context: _ToolExecutionContext) -> Generator[None, None, None]:
+    """Scope tool execution state to the current async context."""
+    token = _CURRENT_TOOL_EXECUTION_CONTEXT.set(context)
+    try:
+        yield
+    finally:
+        _CURRENT_TOOL_EXECUTION_CONTEXT.reset(token)
+
+
+def _get_background_tasks(agent: Any) -> Any | None:
+    """Return the Agent's Background Tasks integration without triggering mock attributes."""
+    return vars(agent).get("_background_tasks")
+
+
+def _get_model_tool_specs(agent: Any) -> list[ToolSpec]:
+    """Assemble current model-facing tool specs with Background Tasks policy applied."""
+    tool_specs = cast(list[ToolSpec], agent.tool_registry.get_all_tool_specs())
+    background_tasks = _get_background_tasks(agent)
+    if background_tasks is None:
+        return tool_specs
+
+    registry = agent.tool_registry
+    tools = list(registry.registry.values())
+    tools.extend(tool for name, tool in registry.dynamic_tools.items() if name not in registry.registry)
+    return cast(list[ToolSpec], background_tasks.transform_tool_specs(tools, tool_specs))
+
+
+def _normalize_tool_result_id(result: ToolResult, tool_use_id: str) -> ToolResult:
+    """Keep results correlated to the model-issued tool-use ID."""
+    if "toolUseId" not in result or result["toolUseId"] == tool_use_id:
+        return result
+    return cast(ToolResult, {**result, "toolUseId": tool_use_id})
 
 
 class ToolExecutor(abc.ABC):
@@ -50,6 +119,7 @@ class ToolExecutor(abc.ABC):
         tool_func: Any,
         tool_use: ToolUse,
         invocation_state: dict[str, Any],
+        interrupt_state: _InterruptState | None = None,
     ) -> tuple[BeforeToolCallEvent | BidiBeforeToolCallEvent, list[Interrupt]]:
         """Invoke the appropriate before tool call hook based on agent type."""
         kwargs = {
@@ -62,6 +132,8 @@ class ToolExecutor(abc.ABC):
             if ToolExecutor._is_agent(agent)
             else BidiBeforeToolCallEvent(agent=cast("BidiAgent", agent), **kwargs)
         )
+        if interrupt_state is not None:
+            object.__setattr__(event, "_interrupt_state_override", interrupt_state)
 
         return await agent.hooks.invoke_callbacks_async(event)
 
@@ -95,7 +167,11 @@ class ToolExecutor(abc.ABC):
         return await agent.hooks.invoke_callbacks_async(event)
 
     @staticmethod
-    def _should_retry(agent: "Agent | BidiAgent", after_event: AfterToolCallEvent | BidiAfterToolCallEvent) -> bool:
+    def _should_retry(
+        agent: "Agent | BidiAgent",
+        after_event: AfterToolCallEvent | BidiAfterToolCallEvent,
+        cancel_signal: threading.Event | None = None,
+    ) -> bool:
         """Return whether a hook-requested retry should run.
 
         Cancellation is terminal: retrying a locally cancelled tool can spin indefinitely
@@ -105,7 +181,10 @@ class ToolExecutor(abc.ABC):
             return False
         if cast(dict[str, Any], after_event.result).get("cancelled") is True:
             return False
-        return not (ToolExecutor._is_agent(agent) and agent._cancel_signal.is_set())
+        resolved_cancel_signal = cancel_signal
+        if resolved_cancel_signal is None and ToolExecutor._is_agent(agent):
+            resolved_cancel_signal = cast("Agent", agent)._cancel_signal
+        return resolved_cancel_signal is None or not resolved_cancel_signal.is_set()
 
     @staticmethod
     async def _stream(
@@ -139,11 +218,42 @@ class ToolExecutor(abc.ABC):
         """
         logger.debug("tool_use=<%s> | streaming", tool_use)
         tool_name = tool_use["name"]
+        original_tool_use_id = tool_use["toolUseId"]
         structured_output_context = structured_output_context or StructuredOutputContext()
+        execution_context = _get_current_tool_execution_context()
+        background_tasks = _get_background_tasks(agent)
+        interrupt_state = (
+            execution_context.interrupt_state
+            if execution_context is not None
+            else getattr(agent, "_interrupt_state", None)
+        )
+        cancel_signal = (
+            execution_context.cancel_signal if execution_context is not None else getattr(agent, "_cancel_signal", None)
+        )
+        if interrupt_state is None:
+            raise RuntimeError("tool execution requires interrupt state")
 
         tool_info = agent.tool_registry.dynamic_tools.get(tool_name)
         tool_func = tool_info if tool_info is not None else agent.tool_registry.registry.get(tool_name)
         tool_spec = tool_func.tool_spec if tool_func is not None else None
+
+        if background_tasks is not None and execution_context is not None and execution_context.route_background:
+            if execution_context.pass_id is None:
+                raise RuntimeError("background task routing requires a pass ID")
+            route_kind, routed = await background_tasks.route_tool_call(
+                agent=agent,
+                tool_use=tool_use,
+                tool_instance=tool_func,
+                invocation_state=invocation_state,
+                pass_id=execution_context.pass_id,
+                origin_span_context=execution_context.origin_span_context,
+            )
+            if route_kind == "result":
+                result = _normalize_tool_result_id(cast(ToolResult, routed), original_tool_use_id)
+                tool_results.append(result)
+                yield ToolResultEvent(result)
+                return
+            tool_use = cast(ToolUse, {**tool_use, "input": routed})
 
         current_span = trace_api.get_current_span()
         if current_span and tool_spec is not None:
@@ -159,7 +269,7 @@ class ToolExecutor(abc.ABC):
                 "messages": agent.messages,
                 "system_prompt": agent.system_prompt,
                 "tool_config": ToolConfig(  # for backwards compatibility
-                    tools=[{"toolSpec": tool_spec} for tool_spec in agent.tool_registry.get_all_tool_specs()],
+                    tools=[{"toolSpec": tool_spec} for tool_spec in _get_model_tool_specs(agent)],
                     toolChoice=cast(ToolChoice, {"auto": ToolChoiceAuto()}),
                 ),
             }
@@ -167,43 +277,64 @@ class ToolExecutor(abc.ABC):
 
         # Retry loop for tool execution - hooks can set after_event.retry = True to retry
         while True:
+            selected_tool = tool_func
             before_event, interrupts = await ToolExecutor._invoke_before_tool_call_hook(
-                agent, tool_func, tool_use, invocation_state
+                agent, tool_func, tool_use, invocation_state, interrupt_state
             )
 
             if interrupts:
                 yield ToolInterruptEvent(tool_use, interrupts)
                 return
 
-            if before_event.cancel_tool:
-                cancel_message = (
-                    before_event.cancel_tool if isinstance(before_event.cancel_tool, str) else "tool cancelled by user"
-                )
-                yield ToolCancelEvent(tool_use, cancel_message)
-
-                cancel_result: ToolResult = {
-                    "toolUseId": str(tool_use.get("toolUseId")),
-                    "status": "error",
-                    "content": [{"text": cancel_message}],
-                }
-
-                after_event, _ = await ToolExecutor._invoke_after_tool_call_hook(
-                    agent,
-                    None,
-                    tool_use,
-                    invocation_state,
-                    cancel_result,
-                    cancel_message=cancel_message,
-                )
-                yield ToolResultEvent(after_event.result)
-                tool_results.append(after_event.result)
-                return
-
             try:
                 tool_start_time = time.monotonic()
                 selected_tool = before_event.selected_tool
-                tool_use = before_event.tool_use
+                hook_tool_use = before_event.tool_use
+                if selected_tool is None:
+                    if hook_tool_use["name"] == tool_name:
+                        selected_tool = tool_func
+                    else:
+                        selected_tool = agent.tool_registry.dynamic_tools.get(
+                            hook_tool_use["name"]
+                        ) or agent.tool_registry.registry.get(hook_tool_use["name"])
+                if (
+                    background_tasks is not None
+                    and execution_context is not None
+                    and execution_context.background_task_id is not None
+                ):
+                    background_tasks.validate_tool_replacement(
+                        original_tool_use_id=original_tool_use_id,
+                        effective_tool=selected_tool,
+                        tool_use=hook_tool_use,
+                    )
+                tool_use = cast(ToolUse, {**hook_tool_use, "toolUseId": original_tool_use_id})
                 invocation_state = before_event.invocation_state
+
+                if before_event.cancel_tool:
+                    cancel_message = (
+                        before_event.cancel_tool
+                        if isinstance(before_event.cancel_tool, str)
+                        else "tool cancelled by user"
+                    )
+                    yield ToolCancelEvent(tool_use, cancel_message)
+
+                    cancel_result: ToolResult = {
+                        "toolUseId": original_tool_use_id,
+                        "status": "error",
+                        "content": [{"text": cancel_message}],
+                    }
+                    after_event, _ = await ToolExecutor._invoke_after_tool_call_hook(
+                        agent,
+                        selected_tool,
+                        tool_use,
+                        invocation_state,
+                        cancel_result,
+                        cancel_message=cancel_message,
+                    )
+                    final_result = _normalize_tool_result_id(after_event.result, original_tool_use_id)
+                    yield ToolResultEvent(final_result)
+                    tool_results.append(final_result)
+                    return
 
                 if not selected_tool:
                     # Unknown tool: log here, but do NOT short-circuit. The middleware chain
@@ -237,7 +368,7 @@ class ToolExecutor(abc.ABC):
                     tool=selected_tool,
                     tool_use=dict(tool_use),  # type: ignore[arg-type]
                     invocation_state=invocation_state,
-                    _interrupt_state=agent._interrupt_state,
+                    _interrupt_state=interrupt_state,
                 )
 
                 result_event: ToolResultEvent | None = None
@@ -255,7 +386,7 @@ class ToolExecutor(abc.ABC):
                     # result handling below are intentionally skipped.
                     if isinstance(event, ToolInterruptEvent):
                         for interrupt in event.interrupts:
-                            agent._interrupt_state.interrupts.setdefault(interrupt.id, interrupt)
+                            interrupt_state.interrupts.setdefault(interrupt.id, interrupt)
                         yield event
                         return
 
@@ -288,12 +419,13 @@ class ToolExecutor(abc.ABC):
                     duration=tool_duration,
                 )
 
-                if ToolExecutor._should_retry(agent, after_event):
+                if ToolExecutor._should_retry(agent, after_event, cancel_signal):
                     logger.debug("tool_name=<%s> | retry requested, retrying tool call", tool_name)
                     continue
 
-                yield ToolResultEvent(after_event.result, exception=after_event.exception)
-                tool_results.append(after_event.result)
+                final_result = _normalize_tool_result_id(after_event.result, original_tool_use_id)
+                yield ToolResultEvent(final_result, exception=after_event.exception)
+                tool_results.append(final_result)
                 return
 
             except InterruptException as interrupt_exception:
@@ -301,9 +433,7 @@ class ToolExecutor(abc.ABC):
                 # interrupt() is read-only, so this handler is the single place the interrupt
                 # is registered before surfacing a ToolInterruptEvent to halt the agent,
                 # matching how hook/tool interrupts are reported.
-                agent._interrupt_state.interrupts.setdefault(
-                    interrupt_exception.interrupt.id, interrupt_exception.interrupt
-                )
+                interrupt_state.interrupts.setdefault(interrupt_exception.interrupt.id, interrupt_exception.interrupt)
                 yield ToolInterruptEvent(tool_use, [interrupt_exception.interrupt])
                 return
 
@@ -319,11 +449,12 @@ class ToolExecutor(abc.ABC):
                 after_event, _ = await ToolExecutor._invoke_after_tool_call_hook(
                     agent, selected_tool, tool_use, invocation_state, error_result, exception=e, duration=tool_duration
                 )
-                if ToolExecutor._should_retry(agent, after_event):
+                if ToolExecutor._should_retry(agent, after_event, cancel_signal):
                     logger.debug("tool_name=<%s> | retry requested after exception, retrying tool call", tool_name)
                     continue
-                yield ToolResultEvent(after_event.result, exception=after_event.exception)
-                tool_results.append(after_event.result)
+                final_result = _normalize_tool_result_id(after_event.result, original_tool_use_id)
+                yield ToolResultEvent(final_result, exception=after_event.exception)
+                tool_results.append(final_result)
                 return
 
     @staticmethod
@@ -354,6 +485,7 @@ class ToolExecutor(abc.ABC):
         """
         tool_name = tool_use["name"]
         structured_output_context = structured_output_context or StructuredOutputContext()
+        execution_context = _get_current_tool_execution_context()
 
         tracer = get_tracer()
 
@@ -364,27 +496,42 @@ class ToolExecutor(abc.ABC):
         tool_start_time = time.time()
 
         with trace_api.use_span(tool_call_span):
+            last_event: TypedEvent | None = None
             async for event in ToolExecutor._stream(
                 agent, tool_use, tool_results, invocation_state, structured_output_context, **kwargs
             ):
+                last_event = event
                 yield event
 
-            if isinstance(event, ToolInterruptEvent):
+            if last_event is None:
+                raise RuntimeError("tool execution did not yield a terminal event")
+
+            if isinstance(last_event, ToolInterruptEvent):
                 tool_duration = time.time() - tool_start_time
                 if ToolExecutor._is_agent(agent):
-                    agent.event_loop_metrics.add_tool_usage(tool_use, tool_duration, tool_trace, False)
+                    metrics = (
+                        execution_context.event_loop_metrics
+                        if execution_context is not None and execution_context.event_loop_metrics is not None
+                        else agent.event_loop_metrics
+                    )
+                    metrics.add_tool_usage(tool_use, tool_duration, tool_trace, False)
                 cycle_trace.add_child(tool_trace)
                 tracer.end_tool_call_span(tool_call_span, tool_result=None)
                 return
 
-            result_event = cast(ToolResultEvent, event)
+            result_event = cast(ToolResultEvent, last_event)
             result = result_event.tool_result
 
             tool_success = result.get("status") == "success"
             tool_duration = time.time() - tool_start_time
             message = Message(role="user", content=[{"toolResult": result}])
             if ToolExecutor._is_agent(agent):
-                agent.event_loop_metrics.add_tool_usage(tool_use, tool_duration, tool_trace, tool_success, message)
+                metrics = (
+                    execution_context.event_loop_metrics
+                    if execution_context is not None and execution_context.event_loop_metrics is not None
+                    else agent.event_loop_metrics
+                )
+                metrics.add_tool_usage(tool_use, tool_duration, tool_trace, tool_success, message)
             cycle_trace.add_child(tool_trace)
 
             tracer.end_tool_call_span(tool_call_span, result, error=result_event.exception)

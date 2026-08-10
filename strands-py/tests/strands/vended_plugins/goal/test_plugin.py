@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from strands import Agent
 from strands.hooks.events import AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent
 from strands.types._snapshot import Snapshot
 from strands.vended_plugins.goal import GoalAttempt, GoalLoop, GoalResult, JudgeConfig, ValidationOutcome
 from strands.vended_plugins.goal.judge import JUDGE_SYSTEM_PROMPT, JudgeOutcome, build_judge_prompt
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 # --- Helpers ---
 
@@ -43,6 +45,22 @@ def _setup_plugin_with_hooks(plugin, agent):
     agent.add_hook = capture_hook
     plugin.init_agent(agent)
     return hooks
+
+
+def _continuation_input(event: AfterInvocationEvent) -> str:
+    intents = event._get_continuations()
+    assert len(intents) == 1
+    continuation_input = intents[0]["input"]
+    assert isinstance(continuation_input, str)
+    return continuation_input
+
+
+def _accept_continuation(event: AfterInvocationEvent) -> None:
+    intents = event._get_continuations()
+    assert len(intents) == 1
+    callback = intents[0].get("on_accepted")
+    assert callback is not None
+    callback()
 
 
 @pytest.fixture(autouse=True)
@@ -169,8 +187,8 @@ class TestFunctionValidator:
         after_event = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](after_event)
 
-        assert after_event.resume is not None
-        assert "Not good enough" in after_event.resume
+        assert "Not good enough" in _continuation_input(after_event)
+        _accept_continuation(after_event)
 
         # Attempt 2 - simulate resume (before hook sees resumed=True)
         hooks["before"][0](BeforeInvocationEvent(agent=agent))
@@ -196,19 +214,21 @@ class TestFunctionValidator:
         hooks["before"][0](BeforeInvocationEvent(agent=agent))
         event1 = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](event1)
-        assert event1.resume is not None
+        assert _continuation_input(event1) is not None
+        _accept_continuation(event1)
 
         # Attempt 2 (resumed)
         hooks["before"][0](BeforeInvocationEvent(agent=agent))
         event2 = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](event2)
-        assert event2.resume is not None
+        assert _continuation_input(event2) is not None
+        _accept_continuation(event2)
 
         # Attempt 3 - final
         hooks["before"][0](BeforeInvocationEvent(agent=agent))
         event3 = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](event3)
-        assert event3.resume is None  # No more retries
+        assert event3._get_continuations() == []  # No more retries
 
         result = plugin.last_result(agent)
         assert result is not None
@@ -269,8 +289,7 @@ class TestFunctionValidator:
         await hooks["after"][0](after_event)
 
         # Should not crash; treats as failed attempt with error feedback
-        assert after_event.resume is not None
-        assert "Validator error" in after_event.resume
+        assert "Validator error" in _continuation_input(after_event)
 
     @pytest.mark.asyncio
     async def test_no_assistant_message_no_op(self):
@@ -285,7 +304,7 @@ class TestFunctionValidator:
         await hooks["after"][0](after_event)
 
         # No assistant message means no validation attempted
-        assert after_event.resume is None
+        assert after_event._get_continuations() == []
         result = plugin.last_result(agent)
         assert result is None
 
@@ -302,8 +321,7 @@ class TestFunctionValidator:
         after_event = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](after_event)
 
-        assert after_event.resume is not None
-        assert "Fix it" in after_event.resume
+        assert "Fix it" in _continuation_input(after_event)
 
     @pytest.mark.asyncio
     async def test_validation_outcome_return(self):
@@ -318,8 +336,7 @@ class TestFunctionValidator:
         after_event = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](after_event)
 
-        assert after_event.resume is not None
-        assert "Use outcome obj" in after_event.resume
+        assert "Use outcome obj" in _continuation_input(after_event)
 
 
 # --- last_result lifecycle ---
@@ -387,7 +404,43 @@ class TestPreserveContextFalse:
         after_event = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](after_event)
 
+        continuation = after_event._get_continuations()[0]
+        continuation["on_accepted"]()
         agent.load_snapshot.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_retry_restores_pre_rewind_transcript(self):
+        model = MockedModelProvider([{"role": "assistant", "content": [{"text": "attempt-1"}]}])
+        plugin = GoalLoop(
+            name="fresh-context-cancelled-retry",
+            goal=lambda _response, _agent: {"passed": False, "feedback": "retry"},
+            max_attempts=3,
+            preserve_context=False,
+        )
+        agent = Agent(model=model, plugins=[plugin], callback_handler=None)
+        invocation_count = 0
+
+        def cancel_retry(event: BeforeInvocationEvent) -> None:
+            nonlocal invocation_count
+            invocation_count += 1
+            if invocation_count == 2:
+                event.cancel = "retry cancelled"
+
+        agent.add_hook(cancel_retry, BeforeInvocationEvent)
+
+        result = await agent.invoke_async("go")
+
+        assert result.message["content"] == [{"text": "retry cancelled"}]
+        assert [
+            {
+                "role": message["role"],
+                "text": "".join(block["text"] for block in message["content"] if "text" in block),
+            }
+            for message in agent.messages
+        ] == [
+            {"role": "user", "text": "go"},
+            {"role": "assistant", "text": "attempt-1"},
+        ]
 
     @pytest.mark.asyncio
     async def test_snapshot_not_taken_on_subsequent_model_calls(self):
@@ -425,7 +478,7 @@ class TestResumePromptTemplate:
         after_event = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](after_event)
 
-        assert after_event.resume == "CUSTOM: try again"
+        assert _continuation_input(after_event) == "CUSTOM: try again"
 
     @pytest.mark.asyncio
     async def test_default_prompt_with_feedback(self):
@@ -440,8 +493,9 @@ class TestResumePromptTemplate:
         after_event = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](after_event)
 
-        assert "Too verbose" in after_event.resume
-        assert "Feedback on what was wrong" in after_event.resume
+        continuation_input = _continuation_input(after_event)
+        assert "Too verbose" in continuation_input
+        assert "Feedback on what was wrong" in continuation_input
 
     @pytest.mark.asyncio
     async def test_default_prompt_without_feedback(self):
@@ -453,7 +507,7 @@ class TestResumePromptTemplate:
         after_event = AfterInvocationEvent(agent=agent)
         await hooks["after"][0](after_event)
 
-        assert "did not satisfy the goal" in after_event.resume
+        assert "did not satisfy the goal" in _continuation_input(after_event)
 
 
 # --- Judge helpers ---
@@ -607,7 +661,9 @@ async def test_nl_judge_feeds_feedback_back():
         hooks = _setup_plugin_with_hooks(plugin, agent)
 
         hooks["before"][0](BeforeInvocationEvent(agent=agent))
-        await hooks["after"][0](AfterInvocationEvent(agent=agent))
+        first_event = AfterInvocationEvent(agent=agent)
+        await hooks["after"][0](first_event)
+        _accept_continuation(first_event)
 
         # Simulate the resumed invocation
         hooks["before"][0](BeforeInvocationEvent(agent=agent))

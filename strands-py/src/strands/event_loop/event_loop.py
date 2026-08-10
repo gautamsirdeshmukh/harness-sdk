@@ -22,6 +22,7 @@ from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, 
 from ..telemetry.metrics import Trace
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools
+from ..tools.executors._executor import _get_model_tool_specs
 from ..tools.structured_output._structured_output_context import StructuredOutputContext
 from ..types._events import (
     EventLoopStopEvent,
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from ..agent import Agent
+    from ..hooks.events import _ContinuationIntent
     from ..interrupt import Interrupt
 
 logger = logging.getLogger(__name__)
@@ -120,6 +122,13 @@ def _has_tool_use_in_latest_message(messages: "Messages") -> bool:
     return False
 
 
+def _interrupt_result_message(agent: "Agent") -> Message:
+    """Return the last conversation message for a model-boundary interrupt."""
+    if agent.messages:
+        return agent.messages[-1]
+    return {"role": "assistant", "content": [{"text": "Interrupted"}]}
+
+
 async def _estimate_input_tokens(agent: "Agent") -> int:
     """Estimate the input token count for the next model call.
 
@@ -153,7 +162,7 @@ async def _estimate_input_tokens(agent: "Agent") -> int:
         return known_baseline + await agent.model.count_tokens(new_messages)
 
     # Cold start: resolve tool specs lazily for estimation only
-    tool_specs = agent.tool_registry.get_all_tool_specs()
+    tool_specs = _get_model_tool_specs(agent)
     return await agent.model.count_tokens(
         messages,
         tool_specs=tool_specs,
@@ -188,6 +197,10 @@ async def event_loop_cycle(
     invocation_state: dict[str, Any],
     structured_output_context: StructuredOutputContext | None = None,
     limits: Limits | None = None,
+    *,
+    staged_continuation_messages: Messages | None = None,
+    continuation_intents: list["_ContinuationIntent"] | None = None,
+    on_continuation_selected: Callable[[], None] | None = None,
 ) -> AsyncGenerator[TypedEvent, None]:
     """Execute a single cycle of the event loop.
 
@@ -213,6 +226,9 @@ async def event_loop_cycle(
         limits: Optional per-invocation budget caps. Checked at the top of this cycle
             (after tools from the previous cycle have run to completion). See
             :class:`~strands.types.agent.Limits`.
+        staged_continuation_messages: Deferred continuation input for the first model request.
+        continuation_intents: Owners of the staged continuation input.
+        on_continuation_selected: Callback invoked once the model request consumes staged input.
 
     Yields:
         Model and tool stream events. The final ``EventLoopStopEvent`` payload
@@ -283,8 +299,13 @@ async def event_loop_cycle(
 
     with trace_api.use_span(cycle_span, end_on_exit=False):
         try:
-            # Resume a tool interrupt by replaying its stored message instead of calling the model.
-            if agent._interrupt_state.activated and "tool_use_message" in agent._interrupt_state.context:
+            # Foreground tool interrupts resume pending tool execution. Background interrupts
+            # must reach BeforeModelCallEvent so their responses can be routed to paused tasks.
+            if (
+                agent._interrupt_state.activated
+                and "tool_use_message" in agent._interrupt_state.context
+                and not agent._interrupt_state.context.get("background_tasks")
+            ):
                 stop_reason: StopReason = "tool_use"
                 message = agent._interrupt_state.context["tool_use_message"]
             # Skip model invocation if the latest message contains ToolUse
@@ -293,9 +314,23 @@ async def event_loop_cycle(
                 message = agent.messages[-1]
             else:
                 model_events = _handle_model_execution(
-                    agent, cycle_span, cycle_trace, invocation_state, tracer, structured_output_context
+                    agent,
+                    cycle_span,
+                    cycle_trace,
+                    invocation_state,
+                    tracer,
+                    structured_output_context,
+                    staged_continuation_messages=staged_continuation_messages,
+                    continuation_intents=continuation_intents,
+                    on_continuation_selected=on_continuation_selected,
                 )
                 async for model_event in model_events:
+                    if isinstance(model_event, EventLoopStopEvent):
+                        interrupt_message = model_event["stop"][1]
+                        agent.event_loop_metrics.end_cycle(cycle_start_time, cycle_trace, attributes)
+                        tracer.end_event_loop_cycle_span(cycle_span, interrupt_message)
+                        yield model_event
+                        return
                     if not isinstance(model_event, ModelStopReason):
                         yield model_event
 
@@ -455,6 +490,10 @@ async def _handle_model_execution(
     invocation_state: dict[str, Any],
     tracer: Tracer,
     structured_output_context: StructuredOutputContext,
+    *,
+    staged_continuation_messages: Messages | None = None,
+    continuation_intents: list["_ContinuationIntent"] | None = None,
+    on_continuation_selected: Callable[[], None] | None = None,
 ) -> AsyncGenerator[TypedEvent, None]:
     """Handle model execution with retry logic for throttling exceptions.
 
@@ -468,6 +507,9 @@ async def _handle_model_execution(
         invocation_state: State maintained across cycles.
         tracer: Tracer instance for span management.
         structured_output_context: Context for structured output management.
+        staged_continuation_messages: Deferred continuation input for this model request.
+        continuation_intents: Owners of the staged continuation input.
+        on_continuation_selected: Callback invoked once the request consumes staged input.
 
     Yields:
         Model stream events and throttle events during retries.
@@ -482,7 +524,15 @@ async def _handle_model_execution(
 
     # Retry loop - actual retry logic is handled by retry_strategy hook
     # Hooks control when to stop retrying via the event.retry flag
+    model_intents: list[_ContinuationIntent] = []
+    model_continuation_messages: Messages | None = None
+    model_request_capture: list[Messages] = []
     while True:
+        before_model_call_event: BeforeModelCallEvent | None = None
+        model_intents = []
+        model_continuation_messages = None
+        model_request_capture.clear()
+        model_intents_settled = False
         try:
             # Estimate input tokens for the upcoming model call (non-fatal)
             projected_input_tokens: int | None = None
@@ -497,8 +547,41 @@ async def _handle_model_execution(
                 projected_input_tokens=projected_input_tokens,
             )
             await agent.hooks.invoke_callbacks_async(before_model_call_event)
+            model_intents = before_model_call_event._get_continuations()
+            boundary_interrupts = before_model_call_event._get_boundary_interrupts()
+            if boundary_interrupts:
+                rejected_intents, model_intents = model_intents, []
+                model_intents_settled = True
+                if rejected_intents:
+                    await agent._reject_continuations(
+                        rejected_intents,
+                        RuntimeError("Model call interrupted at boundary"),
+                    )
+                stream_trace.end()
+                yield EventLoopStopEvent(
+                    "interrupt",
+                    _interrupt_result_message(agent),
+                    agent.event_loop_metrics,
+                    invocation_state.get("request_state", {}),
+                    boundary_interrupts,
+                )
+                return
+            if model_intents:
+                try:
+                    model_continuation_messages = await agent._prepare_continuations(model_intents)
+                except BaseException:
+                    model_intents = []
+                    model_intents_settled = True
+                    raise
 
             if before_model_call_event.cancel:
+                if model_intents:
+                    await agent._reject_continuations(
+                        model_intents,
+                        RuntimeError("Model call cancelled by hook"),
+                    )
+                model_intents = []
+                model_intents_settled = True
                 cancel_text = (
                     before_model_call_event.cancel
                     if isinstance(before_model_call_event.cancel, str)
@@ -519,6 +602,18 @@ async def _handle_model_execution(
                 )
                 await agent.hooks.invoke_callbacks_async(after_model_call_event)
 
+                boundary_interrupts = after_model_call_event._get_boundary_interrupts()
+                if boundary_interrupts:
+                    stream_trace.end()
+                    yield EventLoopStopEvent(
+                        "interrupt",
+                        _interrupt_result_message(agent),
+                        agent.event_loop_metrics,
+                        invocation_state.get("request_state", {}),
+                        boundary_interrupts,
+                    )
+                    return
+
                 if after_model_call_event.retry:
                     continue
                 yield ModelStopReason(stop_reason=stop_reason, message=message, usage=usage, metrics=metrics)
@@ -528,7 +623,7 @@ async def _handle_model_execution(
                 tool_spec = structured_output_context.get_tool_spec()
                 tool_specs = [tool_spec] if tool_spec else []
             else:
-                tool_specs = agent.tool_registry.get_all_tool_specs()
+                tool_specs = _get_model_tool_specs(agent)
 
             # Build middleware context with defensive copies to prevent accidental mutation.
             # invocation_state is intentionally shared by reference (hooks/tools write to it).
@@ -540,7 +635,13 @@ async def _handle_model_execution(
             )
             middleware_context = InvokeModelContext(
                 agent=agent,
-                messages=copy.deepcopy(agent.messages),
+                messages=copy.deepcopy(
+                    [
+                        *agent.messages,
+                        *(model_continuation_messages or []),
+                        *(staged_continuation_messages or []),
+                    ]
+                ),
                 system_prompt=copy.deepcopy(system_prompt_value),
                 tool_specs=copy.deepcopy(tool_specs),
                 tool_choice=copy.deepcopy(structured_output_context.tool_choice),
@@ -555,13 +656,22 @@ async def _handle_model_execution(
             # chain completes (success only). model_state is intentionally NOT on the context.
             model_state_snapshot = copy.deepcopy(agent._model_state)
 
+            def capture_model_request(messages: Messages) -> None:
+                model_request_capture.append(messages)
+
             # Run through middleware chain. The last yielded event is ModelStopReason
             # which serves as both the streaming result event and the middleware result.
             last_event = None
             async for event in agent._middleware_registry.invoke(
                 InvokeModelStage,
                 middleware_context,
-                _make_invoke_model_terminal(agent, cycle_span, tracer, model_state_snapshot),
+                _make_invoke_model_terminal(
+                    agent,
+                    cycle_span,
+                    tracer,
+                    model_state_snapshot,
+                    on_model_request=capture_model_request,
+                ),
             ):
                 last_event = event
                 yield event
@@ -598,8 +708,37 @@ async def _handle_model_execution(
 
             await agent.hooks.invoke_callbacks_async(after_model_call_event)
 
+            boundary_interrupts = after_model_call_event._get_boundary_interrupts()
+            if boundary_interrupts:
+                rejected_intents, model_intents = model_intents, []
+                model_intents_settled = True
+                if rejected_intents:
+                    await agent._reject_continuations(
+                        rejected_intents,
+                        RuntimeError("Model response interrupted at boundary"),
+                    )
+                agent.event_loop_metrics.update_usage(usage)
+                agent.event_loop_metrics.update_metrics(metrics)
+                stream_trace.add_message(message)
+                stream_trace.end()
+                yield EventLoopStopEvent(
+                    "interrupt",
+                    _interrupt_result_message(agent),
+                    agent.event_loop_metrics,
+                    invocation_state.get("request_state", {}),
+                    boundary_interrupts,
+                )
+                return
+
             # Check if hooks want to retry the model call
             if after_model_call_event.retry:
+                if model_intents:
+                    await agent._reject_continuations(
+                        model_intents,
+                        RuntimeError("Model call retried by hook"),
+                    )
+                model_intents = []
+                model_intents_settled = True
                 agent.event_loop_metrics.update_usage(usage)
                 logger.debug(
                     "stop_reason=<%s>, retry_requested=<True> | hook requested model retry",
@@ -612,13 +751,28 @@ async def _handle_model_execution(
 
             break  # Success! Break out of retry loop
 
-        except Exception as e:
+        except BaseException as error:
+            if not model_intents_settled and before_model_call_event is not None and not model_intents:
+                model_intents = before_model_call_event._get_continuations()
+
+            if not isinstance(error, Exception):
+                if model_intents:
+                    await agent._reject_continuations(model_intents, error)
+                model_intents = []
+                raise
+
             after_model_call_event = AfterModelCallEvent(
                 agent=agent,
                 invocation_state=invocation_state,
-                exception=e,
+                exception=error,
             )
-            await agent.hooks.invoke_callbacks_async(after_model_call_event)
+            try:
+                await agent.hooks.invoke_callbacks_async(after_model_call_event)
+            finally:
+                if model_intents:
+                    await agent._reject_continuations(model_intents, error)
+                model_intents = []
+                model_intents_settled = True
 
             # Emit backwards-compatible events if retry strategy supports it
             if (
@@ -631,36 +785,72 @@ async def _handle_model_execution(
             if after_model_call_event.retry:
                 logger.debug(
                     "exception=<%s>, retry_requested=<True> | hook requested model retry",
-                    type(e).__name__,
+                    type(error).__name__,
                 )
 
                 continue  # Retry the model call
 
             # No retry requested, raise the exception
-            yield ForceStopEvent(reason=e)
-            raise e
+            yield ForceStopEvent(reason=error)
+            raise error
 
     try:
         # Add message in trace and mark the end of the stream messages trace
         stream_trace.add_message(message)
         stream_trace.end()
+        model_request_messages = model_request_capture[-1] if model_request_capture else None
 
-        # Add the response message to the conversation
-        await agent._append_messages(message)
+        if stop_reason == "cancelled":
+            if model_intents:
+                await agent._reject_continuations(model_intents, RuntimeError("Model streaming cancelled"))
+            model_intents = []
+            model_intents_settled = True
+        elif model_intents:
+            if model_request_messages is None:
+                raise RuntimeError("Model continuation response is missing its request messages")
+            await agent._select_continuations(model_intents, model_request_messages)
+            await agent._append_messages_atomically(*(model_continuation_messages or []))
+            await agent._commit_continuations(model_intents)
+            model_intents = []
+            model_intents_settled = True
+
+        if staged_continuation_messages is not None and stop_reason != "cancelled":
+            if model_request_messages is None:
+                raise RuntimeError("Selected continuation response is missing its request messages")
+            await agent._select_continuations(
+                continuation_intents or [],
+                model_request_messages,
+            )
+            if on_continuation_selected is not None:
+                on_continuation_selected()
+            await agent._append_messages_atomically(*staged_continuation_messages, message)
+        else:
+            await agent._append_messages(message)
 
         # Update metrics
         agent.event_loop_metrics.update_usage(usage)
         agent.event_loop_metrics.update_metrics(metrics)
 
-    except Exception as e:
-        yield ForceStopEvent(reason=e)
-        logger.error("exception=<%s> | event loop cycle failed", type(e).__name__)
+    except BaseException as error:
+        if not model_intents_settled and model_intents:
+            await agent._reject_continuations(model_intents, error)
+            model_intents = []
+            model_intents_settled = True
+        if not isinstance(error, Exception):
+            raise
+        yield ForceStopEvent(reason=error)
+        logger.error("exception=<%s> | event loop cycle failed", type(error).__name__)
         logger.debug("event loop cycle failed", exc_info=True)
-        raise EventLoopException(e, invocation_state["request_state"]) from e
+        raise EventLoopException(error, invocation_state["request_state"]) from error
 
 
 def _make_invoke_model_terminal(
-    agent: "Agent", cycle_span: Any, tracer: Tracer, model_state: dict[str, Any]
+    agent: "Agent",
+    cycle_span: Any,
+    tracer: Tracer,
+    model_state: dict[str, Any],
+    *,
+    on_model_request: Callable[[Messages], None] | None = None,
 ) -> "Callable[[InvokeModelContext], AsyncGenerator[Any, None]]":
     """Create the terminal function for InvokeModelStage middleware.
 
@@ -671,6 +861,8 @@ def _make_invoke_model_terminal(
 
     async def terminal(ctx: InvokeModelContext) -> AsyncGenerator[Any, None]:
         system_prompt_str, system_prompt_content = split_system_prompt(ctx.system_prompt)
+        if on_model_request is not None:
+            on_model_request(ctx.messages)
 
         model_id = ctx.model.config.get("model_id") if hasattr(ctx.model, "config") else None
         model_invoke_span = tracer.start_model_invoke_span(

@@ -344,12 +344,17 @@ class TestToolMetadata:
 
 
 class TestCancelSignal:
-    """The agent's cancel signal aborts an in-flight request."""
+    """The current tool execution's cancel signal aborts an in-flight request."""
 
     @staticmethod
-    def _tool_context_for(agent: object) -> ToolContext:
+    def _tool_context_for(agent: object, cancel_signal: threading.Event | None = None) -> ToolContext:
         tool_use = ToolUse(toolUseId="http_1", name="http_request", input={})
-        return ToolContext(tool_use=tool_use, agent=agent, invocation_state={})
+        return ToolContext(
+            tool_use=tool_use,
+            agent=agent,
+            invocation_state={},
+            cancel_signal=cancel_signal or threading.Event(),
+        )
 
     @pytest.mark.asyncio
     async def test_pre_flight_cancel_short_circuits(self):
@@ -366,7 +371,7 @@ class TestCancelSignal:
             await tool(
                 method="GET",
                 url="https://example.com/",
-                tool_context=self._tool_context_for(agent),
+                tool_context=self._tool_context_for(agent, cancel),
             )
 
     @pytest.mark.asyncio
@@ -388,8 +393,29 @@ class TestCancelSignal:
             await tool(
                 method="GET",
                 url="https://example.com/",
-                tool_context=self._tool_context_for(agent),
+                tool_context=self._tool_context_for(agent, cancel),
             )
+
+    @pytest.mark.asyncio
+    async def test_uses_task_local_signal_instead_of_agent_signal(self):
+        task_cancel = threading.Event()
+        task_cancel.set()
+        agent_cancel = threading.Event()
+        agent = SimpleNamespace(_cancel_signal=agent_cancel)
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            raise AssertionError("transport should not be called if task-local cancellation is set")
+
+        client = httpx.AsyncClient(transport=_make_transport(handler))
+        tool = make_http_request(client=client)
+        with pytest.raises(asyncio.CancelledError):
+            await tool(
+                method="GET",
+                url="https://example.com/",
+                tool_context=self._tool_context_for(agent, task_cancel),
+            )
+
+        assert agent_cancel.is_set() is False
 
     @pytest.mark.asyncio
     async def test_no_cancel_signal_no_op(self):

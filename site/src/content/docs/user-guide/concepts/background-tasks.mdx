@@ -1,0 +1,202 @@
+---
+title: Background Tasks
+description: >-
+  Configure tools to run in the background while an agent continues working,
+  then inspect, cancel, wait for, restore, and clean up task state safely.
+languages: Python
+tags: [tool-execution, event-loop, error-handling]
+sourceLinks:
+  - path: strands-py/src/strands/agent/agent.py
+  - path: strands-py/src/strands/background_tasks/control.py
+  - path: strands-py/src/strands/background_tasks/errors.py
+  - path: strands-py/src/strands/background_tasks/types.py
+---
+
+Background Tasks let an agent continue its agent loop while long-running tools execute.
+The feature is opt-in and delivers each finished result back into the conversation
+automatically.
+
+## Enable background work
+
+Enable model-selected background work by passing `background_tasks=True` when you
+construct the agent.
+
+```python
+import time
+
+from strands import Agent, tool
+
+
+@tool
+def build_report(topic: str) -> str:
+    """Build a report that takes time to prepare."""
+    time.sleep(2)
+    return f"Report complete: {topic}"
+
+
+agent = Agent(
+    tools=[build_report],
+    background_tasks=True,
+    callback_handler=None,
+)
+
+try:
+    result = agent(
+        "Build a report about renewable energy. "
+        "Continue planning the executive summary while it runs."
+    )
+    print(result)
+finally:
+    agent.cleanup()
+```
+
+The model can choose whether an eligible tool runs in the foreground or background.
+By default, every compatible tool is eligible and the invocation waits for all
+background work before returning.
+
+## Set the execution policy
+
+Assign tools to `agentic`, `always`, or `never` when execution mode must follow an
+explicit policy.
+
+```python
+from strands import Agent, tool
+
+
+@tool
+def build_report(topic: str) -> str:
+    """Build a detailed report."""
+    return f"Report complete: {topic}"
+
+
+@tool
+def read_status() -> str:
+    """Return the current service status."""
+    return "healthy"
+
+
+agent = Agent(
+    tools=[build_report, read_status],
+    background_tasks={
+        "always": [build_report],
+        "never": [read_status],
+        "max_concurrency": 2,
+        "timeout": 30,
+    },
+    callback_handler=None,
+)
+```
+
+Use tool objects in policy lists so renamed tools remain connected to their policy.
+The `"*"` selector applies a mode to every otherwise unassigned tool. A tool can
+appear in only one mode.
+
+| Setting | Default | Behavior |
+| --- | --- | --- |
+| `agentic` | `["*"]` | The model chooses foreground or background execution. |
+| `always` | `[]` | Matching tools always run in the background. |
+| `never` | `[]` | Matching tools always run in the foreground. |
+| `wait_for_completion` | `True` | The invocation waits for background work. |
+| `max_concurrency` | `4` | Limits physically executing background tasks. |
+| `timeout` | No limit | Limits each task's execution time in seconds. |
+
+## Return before work finishes
+
+Set `wait_for_completion` to `False` when the caller should regain control while work
+continues.
+
+```python
+import time
+
+from strands import Agent, tool
+
+
+@tool
+def build_report(topic: str) -> str:
+    """Build a report that takes time to prepare."""
+    time.sleep(2)
+    return f"Report complete: {topic}"
+
+
+agent = Agent(
+    tools=[build_report],
+    background_tasks={
+        "always": [build_report],
+        "wait_for_completion": False,
+    },
+    callback_handler=None,
+)
+
+try:
+    agent("Build a report about renewable energy.")
+
+    controls = agent.background_tasks
+    assert controls is not None
+
+    controls.wait(timeout=30)
+    for task in controls.list():
+        completed = controls.get(task["task_id"])
+        print(completed)
+
+    agent("Continue with the completed report.")
+finally:
+    agent.cleanup()
+```
+
+The next invocation delivers completed results to the model. Delivered tasks are
+then removed from `get()` and `list()`, while their results remain in
+`agent.messages`.
+
+Background Tasks do not invoke the agent when work finishes. Your application must
+start the next invocation when it is ready to consume completed results.
+
+## Cancel and wait for tasks
+
+Use the public controls when application code needs to stop work or wait for physical
+idleness.
+
+| Operation | Result |
+| --- | --- |
+| `get(task_id)` | Returns a task snapshot or `None`. |
+| `list()` | Returns visible task snapshots in admission order. |
+| `cancel(task_id)` | Requests cancellation and returns the updated task. |
+| `wait(timeout=...)` | Waits for physical idleness without cancelling work. |
+
+Cancellation is cooperative. A context-aware tool can observe
+`tool_context.cancel_signal` and stop promptly. A wait timeout stops waiting but does
+not cancel any task. `cancel()` raises `BackgroundTaskNotFoundError` for an unknown or
+delivered task. `wait()` raises `BackgroundTasksTimeoutError`, whose `timeout`
+attribute contains the requested wait in seconds.
+
+Async applications can use `get_async()`, `list_async()`, `cancel_async()`, and
+`wait_async()` without blocking the caller event loop.
+
+## Restore persisted task state
+
+Include agent state in session or snapshot persistence to retain completed,
+undelivered results across process boundaries.
+
+For snapshots, capture the `"state"` field with
+`agent.take_snapshot(include=["state"])`, construct the replacement agent with the
+same tools and Background Tasks policy, then call `load_snapshot()`. Session managers
+persist the same agent state as part of their normal lifecycle.
+
+The SDK never replays tool side effects after restoration. Tasks restored while
+queued, working, or paused become failed tasks with a `recovery_error`. Completed
+results that were not delivered remain available for delivery on the next invocation.
+
+## Handle interrupts
+
+Respond to a background tool interrupt through the same interrupt response flow used
+for foreground tools. The agent surfaces paused background-task interrupts at an
+invocation boundary and resumes the owning task after receiving the matching
+response.
+
+Other background tasks continue running while one task waits for a response. See
+[Interrupts](./interrupts.md) for the response format and resume loop.
+
+## Clean up active work
+
+Call `agent.cleanup()` when the agent is no longer needed. Cleanup requests
+cooperative cancellation for active background work and releases tool-provider
+resources. Do not rely on object finalization to stop active work promptly.

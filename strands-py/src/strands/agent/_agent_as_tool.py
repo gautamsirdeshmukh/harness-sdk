@@ -6,6 +6,7 @@ so it can be passed to another agent's tool list.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import threading
@@ -183,6 +184,7 @@ class _AgentAsTool(AgentTool):
             prompt = str(tool_input)
 
         tool_use_id = tool_use["toolUseId"]
+        cancel_watcher: asyncio.Task[None] | None = None
 
         # Serialize access to the underlying agent. _reset_agent_state() mutates
         # the agent before stream_async acquires its own lock, so a concurrent
@@ -215,6 +217,14 @@ class _AgentAsTool(AgentTool):
                 self._reset_agent_state(tool_use_id)
 
             logger.debug("tool_name=<%s>, tool_use_id=<%s> | invoking agent", self._tool_name, tool_use_id)
+
+            from ..tools.executors._executor import _get_current_tool_execution_context
+
+            execution_context = _get_current_tool_execution_context()
+            if execution_context is not None:
+                cancel_watcher = asyncio.create_task(
+                    self._forward_cancellation(execution_context.cancel_signal),
+                )
 
             result = None
             async for event in self._agent.stream_async(prompt):
@@ -297,7 +307,15 @@ class _AgentAsTool(AgentTool):
                 }
             )
         finally:
+            if cancel_watcher is not None:
+                cancel_watcher.cancel()
+                await asyncio.gather(cancel_watcher, return_exceptions=True)
             self._lock.release()
+
+    async def _forward_cancellation(self, cancel_signal: threading.Event) -> None:
+        while not cancel_signal.is_set():
+            await asyncio.sleep(0.01)
+        self._agent.cancel()
 
     def _reset_agent_state(self, tool_use_id: str) -> None:
         """Reset the wrapped agent to its initial state.

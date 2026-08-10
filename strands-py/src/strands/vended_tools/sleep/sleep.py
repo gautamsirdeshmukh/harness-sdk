@@ -3,7 +3,7 @@
 Provides :func:`make_sleep` (a factory that lets the caller configure the
 maximum permitted duration) and :data:`sleep` (a default instance with a 60-second
 cap). Sleeps are implemented with :func:`asyncio.sleep`, which unblocks
-immediately when the surrounding task is cancelled. When the tool is invoked
+immediately when the tool execution is cancelled. When the tool is invoked
 through the standard :class:`DecoratedFunctionTool` path, the raised
 :class:`asyncio.CancelledError` is caught by the tool executor and surfaced as
 a tool-error result; direct callers awaiting the underlying coroutine observe
@@ -32,7 +32,7 @@ def make_sleep(
     """Create a sleep tool with a configurable maximum duration.
 
     The returned tool pauses execution for ``duration`` seconds via
-    :func:`asyncio.sleep`. Cancelling the surrounding task unblocks the sleep
+    :func:`asyncio.sleep`. Cancelling the tool execution unblocks the sleep
     immediately rather than waiting for the full duration; the resulting
     :class:`asyncio.CancelledError` is caught by the standard tool executor
     when the tool is invoked through :class:`DecoratedFunctionTool` and
@@ -80,7 +80,21 @@ def make_sleep(
         if seconds > resolved_max:
             raise ValueError(f"duration {seconds} exceeds maximum of {resolved_max} seconds")
 
-        await asyncio.sleep(seconds)
+        from ...tools.executors._executor import _get_current_tool_execution_context
+
+        execution_context = _get_current_tool_execution_context()
+        cancel_signal = execution_context.cancel_signal if execution_context is not None else None
+        if cancel_signal is None:
+            await asyncio.sleep(seconds)
+        else:
+            deadline = asyncio.get_running_loop().time() + seconds
+            while True:
+                if cancel_signal.is_set():
+                    raise asyncio.CancelledError
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(remaining, 0.05))
         return f"Slept for {duration} seconds"
 
     return sleep_tool

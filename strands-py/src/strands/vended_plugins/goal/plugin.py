@@ -361,11 +361,34 @@ class GoalLoop(Plugin):
                 _finish_run(run, "max_attempts")
                 return
 
-            if run.initial_snapshot:
-                event.agent.load_snapshot(run.initial_snapshot)
+            rollback_snapshot: Snapshot | None = None
 
-            event.resume = self._resume_prompt_template(outcome.feedback.strip() if outcome.feedback else None)
-            run.resumed = True
+            def on_accepted() -> None:
+                nonlocal rollback_snapshot
+                rollback_snapshot = event.agent.take_snapshot(
+                    preset="session",
+                    include=["system_prompt"],
+                    exclude=["state"],
+                )
+                if run.initial_snapshot:
+                    event.agent.load_snapshot(run.initial_snapshot)
+                run.resumed = True
+
+            def on_rejected(_reason: object) -> None:
+                nonlocal rollback_snapshot
+                if rollback_snapshot:
+                    event.agent.load_snapshot(rollback_snapshot)
+                    rollback_snapshot = None
+                run.resumed = False
+
+            event._continue_with(
+                {
+                    "phase": "guidance",
+                    "input": self._resume_prompt_template(outcome.feedback.strip() if outcome.feedback else None),
+                    "on_accepted": on_accepted,
+                    "on_rejected": on_rejected,
+                }
+            )
 
         agent.add_hook(_after_invocation, AfterInvocationEvent)
 

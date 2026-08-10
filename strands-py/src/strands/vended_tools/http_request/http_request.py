@@ -101,6 +101,7 @@ http_request = make_http_request()
 
 # ---- Internals ----
 
+
 def _resolve_timeout(
     model_timeout: float | None,
     client: httpx.AsyncClient | None,
@@ -188,9 +189,7 @@ async def _perform_request(
 
             if response.status_code >= 400:
                 await response.aclose()
-                raise HttpRequestError(
-                    f"HTTP {response.status_code} {response.reason_phrase}: {method} {url}"
-                )
+                raise HttpRequestError(f"HTTP {response.status_code} {response.reason_phrase}: {method} {url}")
 
             body_text = await _read_body(response, cancel_signal)
         finally:
@@ -241,11 +240,10 @@ def _response_headers(response: httpx.Response) -> dict[str, str]:
 
 
 def _extract_cancel_signal(tool_context: ToolContext | None) -> threading.Event | None:
-    """Return the agent's cancellation event when available."""
+    """Return the current tool execution's cancellation event when available."""
     if tool_context is None:
         return None
-    agent: Any = getattr(tool_context, "agent", None)
-    signal: Any = getattr(agent, "_cancel_signal", None)
+    signal: Any = getattr(tool_context, "cancel_signal", None)
     return signal if isinstance(signal, threading.Event) else None
 
 

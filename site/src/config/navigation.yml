@@ -82,6 +82,7 @@ sidebar:
           - docs/user-guide/concepts/agents/hooks
           - docs/user-guide/concepts/agents/conversation-management
           - docs/user-guide/concepts/context-management
+          - docs/user-guide/concepts/background-tasks
           - label: Memory
             collapsed: true
             addedDate: 2026-06-17

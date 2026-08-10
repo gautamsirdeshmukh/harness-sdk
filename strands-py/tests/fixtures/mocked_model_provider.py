@@ -41,6 +41,7 @@ class MockedModelProvider(Model):
         self.agent_responses = [*agent_responses]
         self.usages: list[Usage] | None = [*usages] if usages is not None else None
         self.index = 0
+        self.last_tool_specs: list[ToolSpec] | None = None
 
     def format_chunk(self, event: Any) -> StreamEvent:
         return event
@@ -75,6 +76,7 @@ class MockedModelProvider(Model):
         system_prompt_content=None,
         **kwargs: Any,
     ) -> AsyncGenerator[Any, None]:
+        self.last_tool_specs = tool_specs
         usage = self.usages[self.index] if self.usages is not None else None
         events = self.map_agent_message_to_events(self.agent_responses[self.index], usage=usage)
         for event in events:

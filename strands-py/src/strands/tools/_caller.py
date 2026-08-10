@@ -9,12 +9,13 @@ Example:
 
 import json
 import random
+import threading
 import weakref
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from .._async import run_async
-from ..tools.executors._executor import ToolExecutor
+from ..tools.executors._executor import ToolExecutor, _tool_execution_context, _ToolExecutionContext
 from ..types._events import ToolInterruptEvent
 from ..types.content import ContentBlock, Message
 from ..types.exceptions import ConcurrencyException
@@ -116,10 +117,16 @@ class _ToolCaller:
                 invocation_state = kwargs
 
                 async def acall() -> ToolResult:
-                    async for event in ToolExecutor._stream(self._agent, tool_use, tool_results, invocation_state):
-                        if isinstance(event, ToolInterruptEvent):
-                            self._agent._interrupt_state.deactivate()
-                            raise RuntimeError("cannot raise interrupt in direct tool call")
+                    execution_context = _ToolExecutionContext(
+                        cancel_signal=getattr(self._agent, "_cancel_signal", threading.Event()),
+                        interrupt_state=self._agent._interrupt_state,
+                        route_background=False,
+                    )
+                    with _tool_execution_context(execution_context):
+                        async for event in ToolExecutor._stream(self._agent, tool_use, tool_results, invocation_state):
+                            if isinstance(event, ToolInterruptEvent):
+                                self._agent._interrupt_state.deactivate()
+                                raise RuntimeError("cannot raise interrupt in direct tool call")
 
                     tool_result = tool_results[0]
 

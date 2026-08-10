@@ -102,7 +102,7 @@ class _Interruptible(Protocol):
             raise RuntimeError("agent instance attribute not set")
 
         id = self._interrupt_id(name)
-        state = agent._interrupt_state
+        state = getattr(self, "_interrupt_state_override", None) or agent._interrupt_state
 
         interrupt_ = state.interrupts.setdefault(id, Interrupt(id, name, reason, response))
         if interrupt_.response is not None:

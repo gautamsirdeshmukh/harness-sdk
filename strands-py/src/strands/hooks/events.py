@@ -4,13 +4,15 @@ This module defines the events that are emitted as Agents run through the lifecy
 """
 
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-from typing_extensions import override
+from typing_extensions import NotRequired, TypedDict, override
 
 if TYPE_CHECKING:
     from ..agent.agent_result import AgentResult
+    from ..interrupt import Interrupt
 
 from ..types.agent import AgentInput
 from ..types.content import Message, Messages
@@ -21,6 +23,22 @@ from .registry import BaseHookEvent, HookEvent
 
 if TYPE_CHECKING:
     from ..multiagent.base import MultiAgentBase
+
+
+class _ContinuationIntent(TypedDict):
+    """Internal contribution to a follow-up Agent pass."""
+
+    phase: Literal["deferred_result", "guidance"]
+    input: AgentInput
+    on_accepted: NotRequired[Callable[[], None | Awaitable[None]]]
+    on_selected: NotRequired[Callable[[Messages], None | Awaitable[None]]]
+    on_committed: NotRequired[Callable[[], None | Awaitable[None]]]
+    on_rejected: NotRequired[Callable[[object], None | Awaitable[None]]]
+
+
+def _sort_continuations(intents: list[_ContinuationIntent]) -> list[_ContinuationIntent]:
+    """Return deferred results before guidance while preserving registration order."""
+    return sorted(intents, key=lambda intent: intent["phase"] != "deferred_result")
 
 
 @dataclass
@@ -104,9 +122,21 @@ class AfterInvocationEvent(HookEvent):
     invocation_state: dict[str, Any] = field(default_factory=dict)
     result: "AgentResult | None" = None
     resume: AgentInput = None
+    _continuations: list[_ContinuationIntent] = field(default_factory=list, init=False, repr=False)
 
     def _can_write(self, name: str) -> bool:
         return name == "resume"
+
+    def _continue_with(self, intent: _ContinuationIntent) -> None:
+        """Register an internal continuation contribution."""
+        self._continuations.append(cast(_ContinuationIntent, dict(intent)))
+
+    def _get_continuations(self) -> list[_ContinuationIntent]:
+        """Return registered continuations in deterministic phase order."""
+        intents = [cast(_ContinuationIntent, dict(intent)) for intent in self._continuations]
+        if self.resume is not None:
+            intents.append({"phase": "guidance", "input": self.resume})
+        return _sort_continuations(intents)
 
     @property
     def should_reverse_callbacks(self) -> bool:
@@ -326,9 +356,27 @@ class BeforeModelCallEvent(HookEvent):
     invocation_state: dict[str, Any] = field(default_factory=dict)
     projected_input_tokens: int | None = None
     cancel: bool | str = False
+    _continuations: list[_ContinuationIntent] = field(default_factory=list, init=False, repr=False)
+    _boundary_interrupts: list["Interrupt"] = field(default_factory=list, init=False, repr=False)
 
     def _can_write(self, name: str) -> bool:
         return name == "cancel"
+
+    def _continue_with(self, intent: _ContinuationIntent) -> None:
+        """Register an internal continuation contribution."""
+        self._continuations.append(cast(_ContinuationIntent, dict(intent)))
+
+    def _get_continuations(self) -> list[_ContinuationIntent]:
+        """Return registered continuations in deterministic phase order."""
+        return _sort_continuations([cast(_ContinuationIntent, dict(intent)) for intent in self._continuations])
+
+    def _interrupt_with(self, interrupts: list["Interrupt"]) -> None:
+        """Request an interrupt stop at this model boundary."""
+        self._boundary_interrupts.extend(interrupts)
+
+    def _get_boundary_interrupts(self) -> list["Interrupt"]:
+        """Return interrupts registered for this model boundary."""
+        return list(self._boundary_interrupts)
 
 
 @dataclass
@@ -383,9 +431,18 @@ class AfterModelCallEvent(HookEvent):
     stop_response: ModelStopResponse | None = None
     exception: Exception | None = None
     retry: bool = False
+    _boundary_interrupts: list["Interrupt"] = field(default_factory=list, init=False, repr=False)
 
     def _can_write(self, name: str) -> bool:
         return name == "retry"
+
+    def _interrupt_with(self, interrupts: list["Interrupt"]) -> None:
+        """Request an interrupt stop at this model boundary."""
+        self._boundary_interrupts.extend(interrupts)
+
+    def _get_boundary_interrupts(self) -> list["Interrupt"]:
+        """Return interrupts registered for this model boundary."""
+        return list(self._boundary_interrupts)
 
     @property
     def should_reverse_callbacks(self) -> bool:

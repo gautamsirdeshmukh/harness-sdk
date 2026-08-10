@@ -4,10 +4,14 @@ import warnings
 import pytest
 import pytest_asyncio
 
-from strands import tool
+from strands import ToolContext, tool
 from strands.experimental.bidi import BidiAgent
 from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
-from strands.experimental.bidi.types.events import BidiConnectionCloseEvent, BidiConnectionRestartEvent, BidiTextInputEvent
+from strands.experimental.bidi.types.events import (
+    BidiConnectionCloseEvent,
+    BidiConnectionRestartEvent,
+    BidiTextInputEvent,
+)
 from strands.types._events import ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
 
 
@@ -82,7 +86,13 @@ async def test_bidi_agent_loop_receive_tool_use(loop, agent, agenerator):
     exp_events = [
         tool_use_event,
         tool_result_event,
-        ToolResultMessageEvent({"role": "user", "content": [{"toolResult": tool_result}]}),
+        ToolResultMessageEvent(
+            {
+                "role": "user",
+                "content": [{"toolResult": tool_result}],
+                "tracking_id": tru_events[2]["message"]["tracking_id"],
+            }
+        ),
     ]
     assert tru_events == exp_events
 
@@ -91,9 +101,45 @@ async def test_bidi_agent_loop_receive_tool_use(loop, agent, agenerator):
         {"role": "assistant", "content": [{"toolUse": tool_use}]},
         {"role": "user", "content": [{"toolResult": tool_result}]},
     ]
-    assert tru_messages == exp_messages
+    assert [{key: value for key, value in message.items() if key != "tracking_id"} for message in tru_messages] == (
+        exp_messages
+    )
+    assert all(isinstance(message.get("tracking_id"), str) for message in tru_messages)
 
     agent.model.send.assert_called_with(tool_result_event)
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_loop_executes_context_tool(agenerator):
+    called_with: list[BidiAgent] = []
+
+    @tool(name="context_tool", context=True)
+    async def context_tool(tool_context: ToolContext) -> str:
+        """Return a context-backed result."""
+        called_with.append(tool_context.agent)
+        return "ok"
+
+    agent = BidiAgent(model=unittest.mock.AsyncMock(spec=BidiModel), tools=[context_tool])
+    loop = agent._loop
+    tool_use = {"toolUseId": "context-1", "name": "context_tool", "input": {}}
+    agent.model.receive = unittest.mock.Mock(
+        return_value=agenerator([ToolUseStreamEvent(current_tool_use=tool_use, delta="")])
+    )
+
+    await loop.start()
+    try:
+        events = []
+        async for event in loop.receive():
+            events.append(event)
+            if len(events) >= 3:
+                break
+
+        result_event = events[1]
+        assert isinstance(result_event, ToolResultEvent)
+        assert result_event.tool_result["status"] == "success"
+        assert called_with == [agent]
+    finally:
+        await loop.stop()
 
 
 @pytest.mark.asyncio
@@ -139,7 +185,6 @@ async def test_bidi_agent_loop_stop_event_loop_flag(agent, agenerator):
 
     tool_use = {"toolUseId": "t3", "name": "time_tool", "input": {}}
     tool_use_event = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
-    tool_result = {"toolUseId": "t3", "status": "success", "content": [{"text": "12:00"}]}
 
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([tool_use_event]))
 
@@ -256,4 +301,9 @@ async def test_bidi_agent_loop_send_respects_event_role(loop, agent):
     agent.model.send = unittest.mock.AsyncMock()
     await loop.start()
     await loop.send(BidiTextInputEvent(text="injected context", role="assistant"))
-    assert agent.messages[-1] == {"role": "assistant", "content": [{"text": "injected context"}]}
+    message = agent.messages[-1]
+    assert {key: value for key, value in message.items() if key != "tracking_id"} == {
+        "role": "assistant",
+        "content": [{"text": "injected context"}],
+    }
+    assert isinstance(message.get("tracking_id"), str)
