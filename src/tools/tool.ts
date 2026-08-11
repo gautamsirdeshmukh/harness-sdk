@@ -34,7 +34,7 @@ export interface ToolContext extends Interruptible {
    */
   invocationState: InvocationState
 
-  /** Execution-scoped cancellation signal for this tool call. */
+  /** Cancellation signal for this tool execution. */
   cancelSignal: AbortSignal
 }
 

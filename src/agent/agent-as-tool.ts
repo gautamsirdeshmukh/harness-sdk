@@ -175,7 +175,7 @@ export class AgentAsTool extends Tool {
   }
 
   async *stream(toolContext: ToolContext): ToolStreamGenerator {
-    const { toolUse, invocationState, cancelSignal } = toolContext
+    const { toolUse } = toolContext
     const toolUseId = toolUse.toolUseId
 
     // Concurrency guard: loadSnapshot + agent.stream() must not overlap.
@@ -196,8 +196,8 @@ export class AgentAsTool extends Tool {
       // mutations in the inner agent's hooks/tools are visible to the outer
       // agent's downstream callbacks and final AgentResult.
       const gen = this._agent.stream(input, {
-        invocationState,
-        cancelSignal,
+        invocationState: toolContext.invocationState,
+        cancelSignal: toolContext.cancelSignal,
       })
       let next = await gen.next()
       while (!next.done) {
@@ -211,10 +211,6 @@ export class AgentAsTool extends Tool {
         next = await gen.next()
       }
       const result = next.value
-
-      if (result.stopReason === 'cancelled') {
-        return createErrorResult(`Agent '${this.name}' cancelled`, toolUseId)
-      }
 
       // Build the tool result
       if (result.structuredOutput !== undefined) {

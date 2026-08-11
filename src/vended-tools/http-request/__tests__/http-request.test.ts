@@ -234,7 +234,7 @@ describe('httpRequest tool', () => {
       ).rejects.toThrow('Network error: Failed to fetch')
     })
 
-    it('uses context.cancelSignal when it differs from the agent signal', async () => {
+    it('uses the tool execution signal for task-local cancellation', async () => {
       let requestSignal: AbortSignal | undefined
       globalThis.fetch = vi.fn((_url, options) => {
         const signal = options?.signal as AbortSignal
@@ -245,17 +245,17 @@ describe('httpRequest tool', () => {
           })
         })
       })
-      const executionController = new AbortController()
-      const agentController = new AbortController()
+      const taskController = new AbortController()
+      const foregroundController = new AbortController()
       const context: ToolContext = {
         toolUse: {
           name: 'http_request',
-          toolUseId: 'task-http',
+          toolUseId: 'background-http',
           input: { method: 'GET', url: 'https://slow-api.example.com' },
         },
-        agent: { cancelSignal: agentController.signal } as LocalAgent,
+        agent: { cancelSignal: foregroundController.signal } as LocalAgent,
         invocationState: {},
-        cancelSignal: executionController.signal,
+        cancelSignal: taskController.signal,
         interrupt: vi.fn() as ToolContext['interrupt'],
       }
 
@@ -268,7 +268,7 @@ describe('httpRequest tool', () => {
       )
       await vi.waitFor(() => expect(requestSignal).toBeDefined())
       const cancelled = expect(request).rejects.toThrow('Request cancelled: GET https://slow-api.example.com')
-      executionController.abort()
+      taskController.abort('task cancelled')
 
       await cancelled
     })

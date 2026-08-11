@@ -24,7 +24,6 @@ export function createMockContext(
   appState?: Record<string, JSONValue>,
   invocationState?: InvocationState
 ): ToolContext {
-  const cancelSignal = new AbortController().signal
   return {
     toolUse,
     agent: {
@@ -32,11 +31,10 @@ export function createMockContext(
       appState: new StateStore(appState),
       messages: [],
       toolRegistry: new ToolRegistry(),
-      cancelSignal,
       addHook: () => () => {},
     } as unknown as LocalAgent,
     invocationState: invocationState ?? {},
-    cancelSignal,
+    cancelSignal: new AbortController().signal,
     interrupt: (): never => {
       throw new Error('interrupt not available in mock context')
     },
