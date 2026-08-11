@@ -58,7 +58,7 @@ describe('ToolCaller', () => {
       )
     })
 
-    it('passes agent.cancelSignal to direct tool calls', async () => {
+    it('passes the agent cancellation signal to direct tool calls', async () => {
       let receivedSignal: AbortSignal | undefined
       const tool = createMockTool('probe', (context) => {
         receivedSignal = context.cancelSignal
