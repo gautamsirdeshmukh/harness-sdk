@@ -2041,6 +2041,57 @@ def test_start_memory_extract_span_links_agent_span(mock_tracer):
         assert attributes["memory.parent.span_id"] == "0000000000000002"
 
 
+def test_start_background_task_span_is_root_and_links_origin(mock_tracer):
+    """Test that detached task execution is a root span linked to its admitting invocation."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+        origin_context = SpanContext(trace_id=1, span_id=2, is_remote=False)
+
+        tracer.start_background_task_span(
+            task_id="task-1",
+            attempt=2,
+            attempt_id="attempt-1",
+            execution_id="execution-1",
+            tool_name="work",
+            agent_id="agent-1",
+            origin_span_context=origin_context,
+        )
+
+        call = mock_tracer.start_span.call_args[1]
+        assert call["name"] == "background_task.execute"
+        assert call["context"] is not None
+        assert len(call["context"]) == 0
+        assert call["links"][0].context is origin_context
+        mock_tracer.start_span.return_value.set_attributes.assert_called_once_with(
+            {
+                "gen_ai.operation.name": "background_task.execute",
+                "gen_ai.system": "strands-agents",
+                "background_task.task.id": "task-1",
+                "background_task.attempt": 2,
+                "background_task.attempt.id": "attempt-1",
+                "background_task.execution.id": "execution-1",
+                "background_task.tool.name": "work",
+                "background_task.agent.id": "agent-1",
+                "background_task.origin.trace_id": "00000000000000000000000000000001",
+                "background_task.origin.span_id": "0000000000000002",
+            }
+        )
+
+
+def test_end_background_task_span_records_outcome_and_error(mock_span):
+    """Test that physical task execution records its outcome and failure."""
+    tracer = Tracer()
+    error = RuntimeError("failed")
+
+    tracer.end_background_task_span(mock_span, outcome="failed", error=error)
+
+    mock_span.set_attributes.assert_called_once_with({"background_task.outcome": "failed"})
+    mock_span.set_status.assert_called_once_with(StatusCode.ERROR, "failed")
+    mock_span.record_exception.assert_called_once_with(error)
+    mock_span.end.assert_called_once_with()
+
+
 def test_end_memory_extract_span_with_error(mock_span):
     """Test ending an extract span with an error records it (failures are swallowed by the coordinator)."""
     tracer = Tracer()

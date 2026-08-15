@@ -212,6 +212,10 @@ export class AgentAsTool extends Tool {
       }
       const result = next.value
 
+      if (result.stopReason === 'cancelled') {
+        return createErrorResult(`Agent '${this.name}' cancelled`, toolUseId)
+      }
+
       // Build the tool result
       if (result.structuredOutput !== undefined) {
         return new ToolResultBlock({

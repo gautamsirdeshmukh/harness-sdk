@@ -1871,6 +1871,9 @@ class Agent(AgentBase):
         cancel_signal: threading.Event,
         interrupt_state: dict[str, Any] | None,
         task_id: str,
+        attempt: int,
+        attempt_id: str,
+        execution_id: str,
         origin_span_context: SpanContext | None,
     ) -> dict[str, Any]:
         """Execute one background tool through the normal hook and middleware lifecycle."""
@@ -1891,37 +1894,55 @@ class Agent(AgentBase):
         )
         tool_results: list[ToolResult] = []
         detached_result: ToolResult | None = None
+        task_span = self.tracer.start_background_task_span(
+            task_id=task_id,
+            attempt=attempt,
+            attempt_id=attempt_id,
+            execution_id=execution_id,
+            tool_name=tool_use["name"],
+            agent_id=self.agent_id,
+            origin_span_context=origin_span_context,
+        )
 
-        if cancel_signal.is_set():
-            return {
-                "result": {
+        try:
+            if cancel_signal.is_set():
+                result: ToolResult = {
                     "toolUseId": tool_use["toolUseId"],
                     "status": "error",
                     "content": [{"text": "Tool execution cancelled"}],
                 }
-            }
+                self.tracer.end_background_task_span(task_span, outcome="failed")
+                return {"result": result}
 
-        with _tool_execution_context(execution_context):
-            cycle_trace = Trace("Background task")
-            async for event in self.tool_executor._execute(
-                self,
-                [tool_use],
-                tool_results,
-                cycle_trace,
-                trace_api.get_current_span(),
-                invocation_state,
-            ):
-                if isinstance(event, ToolInterruptEvent):
-                    for interrupt in event.interrupts:
-                        restored_interrupt_state.interrupts.setdefault(interrupt.id, interrupt)
-                    restored_interrupt_state.activate()
-                    return {"interrupt_state": restored_interrupt_state.to_dict()}
-                if isinstance(event, ToolResultEvent):
-                    detached_result = event.tool_result
+            with trace_api.use_span(task_span), _tool_execution_context(execution_context):
+                cycle_trace = Trace("Background task")
+                async for event in self.tool_executor._execute(
+                    self,
+                    [tool_use],
+                    tool_results,
+                    cycle_trace,
+                    trace_api.get_current_span(),
+                    invocation_state,
+                ):
+                    if isinstance(event, ToolInterruptEvent):
+                        for interrupt in event.interrupts:
+                            restored_interrupt_state.interrupts.setdefault(interrupt.id, interrupt)
+                        restored_interrupt_state.activate()
+                        self.tracer.end_background_task_span(task_span, outcome="suspended")
+                        return {"interrupt_state": restored_interrupt_state.to_dict()}
+                    if isinstance(event, ToolResultEvent):
+                        detached_result = event.tool_result
 
-        if detached_result is None:
-            raise RuntimeError("Detached tool execution produced no ToolResult")
-        return {"result": detached_result}
+            if detached_result is None:
+                raise RuntimeError("Detached tool execution produced no ToolResult")
+            outcome: Literal["completed", "failed"] = (
+                "completed" if detached_result["status"] == "success" else "failed"
+            )
+            self.tracer.end_background_task_span(task_span, outcome=outcome)
+            return {"result": detached_result}
+        except Exception as error:
+            self.tracer.end_background_task_span(task_span, outcome="failed", error=error)
+            raise
 
     def _try_consume_checkpoint_resume(self, prompt: Any) -> bool:
         """Consume a ``checkpointResume`` prompt block, returning True if found.

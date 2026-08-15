@@ -619,6 +619,9 @@ class _InProcessTaskManager:
                     cancel_signal=context.cancel_signal,
                     interrupt_state=context.state,
                     task_id=context.task_id,
+                    attempt=context.attempt,
+                    attempt_id=context.attempt_id,
+                    execution_id=context.execution_id,
                     origin_span_context=deserialize_span_context(descriptor.get("origin_trace_context")),
                 )
 

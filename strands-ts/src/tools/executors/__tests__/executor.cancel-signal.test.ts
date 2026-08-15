@@ -4,6 +4,7 @@ import { Agent } from '../../../agent/agent.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import { AfterToolCallEvent } from '../../../hooks/events.js'
+import { InterruptState } from '../../../interrupt.js'
 import { ExecuteToolStage } from '../../../middleware/stages.js'
 import { MiddlewareRegistry } from '../../../middleware/registry.js'
 import { Meter } from '../../../telemetry/meter.js'
@@ -24,7 +25,11 @@ function createOptions(
     middlewareRegistry,
     tracer: new Tracer(),
     meter: new Meter(),
+    passId: 'pass-1',
     cancelSignal,
+    interruptState: new InterruptState(),
+    backgroundTask: false,
+    beforeToolCallCompleted: false,
   }
 }
 

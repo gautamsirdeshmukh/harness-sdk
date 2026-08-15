@@ -2,15 +2,20 @@ import asyncio
 import json
 import threading
 import time
+from collections.abc import AsyncGenerator
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 from mcp.types import Tool as MCPTool
+from opentelemetry import trace as trace_api
+from opentelemetry.trace import NonRecordingSpan, SpanContext
 
 from strands import Agent, ToolContext, tool
 from strands.agent.agent_result import AgentResult
 from strands.background_tasks import BackgroundTaskNotFoundError, BackgroundTasksTimeoutError
 from strands.tools.mcp import MCPAgentTool, MCPClient
+from strands.types._events import ToolResultEvent, TypedEvent
 from strands.types.content import Message, Messages
 from strands.types.tools import AgentTool, ToolResult, ToolUse
 from tests.fixtures.mocked_model_provider import MockedModelProvider
@@ -118,6 +123,54 @@ async def _wait_for_task_status(agent: Agent, tool_name: str, status: str) -> No
             await asyncio.sleep(0)
 
     await asyncio.wait_for(wait(), timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_detached_tool_executes_under_background_task_span() -> None:
+    agent = Agent(model=MockedModelProvider([]), callback_handler=None)
+    task_span = NonRecordingSpan(SpanContext(trace_id=1, span_id=2, is_remote=False))
+    agent.tracer = MagicMock()
+    agent.tracer.start_background_task_span.return_value = task_span
+    observed_spans: list[tuple[object, object]] = []
+
+    async def execute(
+        _agent: Agent,
+        _tool_uses: list[ToolUse],
+        _tool_results: list[ToolResult],
+        _cycle_trace: Any,
+        cycle_span: object,
+        _invocation_state: dict[str, Any],
+        _structured_output_context: object | None = None,
+    ) -> AsyncGenerator[TypedEvent, None]:
+        observed_spans.append((cycle_span, trace_api.get_current_span()))
+        yield ToolResultEvent(
+            {
+                "toolUseId": "tool-use",
+                "status": "success",
+                "content": [{"text": "done"}],
+            }
+        )
+
+    cast(Any, agent.tool_executor)._execute = execute
+
+    try:
+        result = await agent._execute_detached_tool(
+            tool_use={"name": "work", "toolUseId": "tool-use", "input": {}},
+            invocation_state={},
+            cancel_signal=threading.Event(),
+            interrupt_state=None,
+            task_id="task-1",
+            attempt=2,
+            attempt_id="attempt-1",
+            execution_id="execution-1",
+            origin_span_context=None,
+        )
+    finally:
+        agent.cleanup()
+
+    assert result["result"]["status"] == "success"
+    assert observed_spans == [(task_span, task_span)]
+    agent.tracer.end_background_task_span.assert_called_once_with(task_span, outcome="completed")
 
 
 @pytest.mark.asyncio

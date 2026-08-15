@@ -9,7 +9,7 @@ import logging
 import os
 from collections.abc import Mapping
 from datetime import date, datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import opentelemetry.context as context_api
 import opentelemetry.trace as trace_api
@@ -1217,6 +1217,72 @@ class Tracer:
             attributes["memory.entry.count"] = entry_count
 
         self._end_span(span, attributes, error)
+
+    def start_background_task_span(
+        self,
+        *,
+        task_id: str,
+        attempt: int,
+        attempt_id: str,
+        execution_id: str,
+        tool_name: str,
+        agent_id: str,
+        origin_span_context: SpanContext | None = None,
+    ) -> Span:
+        """Start a root span for one physical background task execution.
+
+        Args:
+            task_id: Durable background task identifier.
+            attempt: Logical attempt number.
+            attempt_id: Identifier shared by resumed executions of one attempt.
+            execution_id: Identifier for this physical execution.
+            tool_name: Name of the tool being executed.
+            agent_id: Identifier of the owning agent.
+            origin_span_context: Optional span context of the invocation that admitted the task.
+
+        Returns:
+            The created span.
+        """
+        attributes: dict[str, AttributeValue] = self._get_common_attributes(operation_name="background_task.execute")
+        attributes.update(
+            {
+                "background_task.task.id": task_id,
+                "background_task.attempt": attempt,
+                "background_task.attempt.id": attempt_id,
+                "background_task.execution.id": execution_id,
+                "background_task.tool.name": tool_name,
+                "background_task.agent.id": agent_id,
+            }
+        )
+
+        links = None
+        if origin_span_context is not None and origin_span_context.is_valid:
+            attributes["background_task.origin.trace_id"] = trace_api.format_trace_id(origin_span_context.trace_id)
+            attributes["background_task.origin.span_id"] = trace_api.format_span_id(origin_span_context.span_id)
+            links = [Link(origin_span_context)]
+
+        return self._start_span(
+            "background_task.execute",
+            attributes=attributes,
+            force_root=True,
+            links=links,
+        )
+
+    def end_background_task_span(
+        self,
+        span: Span,
+        *,
+        outcome: Literal["completed", "suspended", "failed"],
+        error: Exception | None = None,
+    ) -> None:
+        """End one physical background task execution span.
+
+        Args:
+            span: The span to end.
+            outcome: Physical execution outcome.
+            error: Optional execution error.
+        """
+        self._end_span(span, {"background_task.outcome": outcome}, error)
 
     def _get_common_attributes(
         self,
