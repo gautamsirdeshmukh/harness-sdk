@@ -1050,7 +1050,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   /**
    * The cancellation signal for the current invocation.
    *
-   * Tools can pass this to cancellable operations (e.g., `fetch(url, { signal: agent.cancelSignal })`).
+   * SDK-managed tool contexts receive this as `context.cancelSignal` for cancellable operations.
    * Hooks can check `event.agent.cancelSignal.aborted` to detect cancellation.
    */
   get cancelSignal(): AbortSignal {
@@ -1067,7 +1067,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * - At the top of each agent loop cycle
    *
    * If a tool is already executing, it will run to completion unless
-   * the tool checks {@link LocalAgent.cancelSignal | cancelSignal} internally.
+   * the tool checks `context.cancelSignal` internally.
    *
    * Hook callbacks can check `event.agent.cancelSignal.aborted` to detect
    * cancellation and adjust their behavior accordingly.
@@ -1990,7 +1990,9 @@ export class Agent implements LocalAgent, InvokableAgent {
           role: 'assistant',
           content: [new TextBlock('Cancelled by user')],
         })
-        yield this._appendMessage(cancelMessage, invocationState)
+        if (this._hasOpenUserTurn()) {
+          yield this._appendMessage(cancelMessage, invocationState)
+        }
 
         result = new AgentResult({
           stopReason: 'cancelled',
@@ -2021,13 +2023,15 @@ export class Agent implements LocalAgent, InvokableAgent {
     } finally {
       // If cancelled but the catch block was bypassed (generator terminated
       // via .return() when the consumer breaks out of for-await), append an
-      // assistant message so the agent can be reinvoked with a new user prompt.
+      // assistant cancellation message only when a user turn is open.
       if (!caughtError && !result && this.isCancelled) {
         const cancelMessage = new Message({
           role: 'assistant',
           content: [new TextBlock('Cancelled by user')],
         })
-        yield this._appendMessage(cancelMessage, invocationState)
+        if (this._hasOpenUserTurn()) {
+          yield this._appendMessage(cancelMessage, invocationState)
+        }
       }
 
       this._tracer.endAgentSpan(agentSpan, {
@@ -2904,6 +2908,10 @@ export class Agent implements LocalAgent, InvokableAgent {
     for (const message of suffix) {
       yield this._appendMessage(message, invocationState)
     }
+  }
+
+  private _hasOpenUserTurn(): boolean {
+    return this.messages[this.messages.length - 1]?.role === 'user'
   }
 }
 
