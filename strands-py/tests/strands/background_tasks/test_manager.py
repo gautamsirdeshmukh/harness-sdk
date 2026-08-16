@@ -8,6 +8,7 @@ from strands import Agent
 from strands.background_tasks import BackgroundTasksTimeoutError
 from strands.background_tasks._manager import _InProcessTaskManager
 from strands.background_tasks._record import StoredBackgroundTask
+from strands.background_tasks._runtime import get_background_task_runtime
 from strands.hooks import AfterModelCallEvent
 from strands.interrupt import Interrupt, _InterruptState
 from strands.types.interrupt import InterruptResponseContent
@@ -45,6 +46,24 @@ def _resumed_record(response: Any) -> StoredBackgroundTask:
             "state": state.to_dict(),
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_run_sync_allows_sync_operation_on_runtime_thread() -> None:
+    runtime = get_background_task_runtime()
+
+    async def run_on_runtime() -> None:
+        tru_result = runtime.run_sync(lambda: "ready")
+        exp_result = "ready"
+        assert tru_result == exp_result
+
+        async def async_operation() -> str:
+            return "not allowed"
+
+        with pytest.raises(RuntimeError, match="Cannot synchronously wait on an awaitable"):
+            runtime.run_sync(async_operation)
+
+    await runtime.run(run_on_runtime)
 
 
 def test__resume_task_accepts_only_already_applied_response_for_nonpaused_task() -> None:

@@ -304,6 +304,52 @@ async def test_backgrounds_agent_as_tool_through_normal_delivery() -> None:
 
 
 @pytest.mark.asyncio
+async def test_background_tool_can_construct_agent_with_background_tasks() -> None:
+    children: list[Agent] = []
+
+    @tool(name="construct_child")
+    async def construct_child() -> str:
+        """Construct a child agent."""
+        child = Agent(
+            model=MockedModelProvider([_assistant_text("child complete")]),
+            background_tasks=True,
+            callback_handler=None,
+        )
+        children.append(child)
+        return "child constructed"
+
+    parent = Agent(
+        model=MockedModelProvider(
+            [
+                _assistant_tool_use("construct_child", "construct-child-use", {}),
+                _assistant_text("Task admitted."),
+                _assistant_text("Result delivered."),
+            ]
+        ),
+        tools=[construct_child],
+        background_tasks={"always": [construct_child]},
+        callback_handler=None,
+    )
+
+    try:
+        await parent.invoke_async("Construct a child.")
+        tru_child_count = len(children)
+        exp_child_count = 1
+        assert tru_child_count == exp_child_count
+        deliveries = _background_deliveries(parent.messages)
+        exp_delivery_count = 1
+        assert len(deliveries) == exp_delivery_count
+        delivery_tool_use, delivery_tool_result = deliveries[0]
+        exp_status = "completed"
+        assert delivery_tool_use["input"]["status"] == exp_status
+        assert any(content.get("text") == "child constructed" for content in delivery_tool_result["content"])
+    finally:
+        await asyncio.to_thread(parent.cleanup)
+        for child in children:
+            await asyncio.to_thread(child.cleanup)
+
+
+@pytest.mark.asyncio
 async def test_background_sleep_releases_execution_capacity_on_task_cancellation() -> None:
     sleep_tool = make_sleep(max_duration=10, name="background_sleep")
     model = MockedModelProvider(

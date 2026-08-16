@@ -77,7 +77,12 @@ class _BackgroundTaskRuntime:
         """Run an operation on the persistent loop from synchronous code."""
         loop = self._ensure_started()
         if threading.current_thread() is self._thread:
-            raise RuntimeError("Cannot synchronously wait on the Background Tasks runtime thread")
+            result = operation()
+            if inspect.isawaitable(result):
+                if inspect.iscoroutine(result):
+                    result.close()
+                raise RuntimeError("Cannot synchronously wait on an awaitable from the Background Tasks runtime thread")
+            return result
 
         future = asyncio.run_coroutine_threadsafe(self._invoke(operation), loop)
         return future.result()
