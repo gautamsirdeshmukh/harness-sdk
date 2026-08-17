@@ -177,17 +177,41 @@ def _background_delivery_id(tool_use_message: Message, tool_result_message: Mess
 
 
 def _deliveries_match(left: tuple[Message, Message], right: tuple[Message, Message]) -> bool:
-    def project(messages: tuple[Message, Message]) -> object:
-        return [
-            {
-                "role": message["role"],
-                "content": encode_bytes_values(message["content"]),
-            }
-            for message in messages
-        ]
+    def project(messages: tuple[Message, Message]) -> object | None:
+        tool_use_message, tool_result_message = messages
+        tool_use = None
+        for content in tool_use_message["content"]:
+            tool_use_candidate = content.get("toolUse")
+            if tool_use_candidate is not None and tool_use_candidate.get("name") == BACKGROUND_RESULT_TOOL_NAME:
+                tool_use = tool_use_candidate
+                break
+        if tool_use is None:
+            return None
+        tool_result = None
+        for content in tool_result_message["content"]:
+            tool_result_candidate = content.get("toolResult")
+            if tool_result_candidate is not None and tool_result_candidate.get("toolUseId") == tool_use.get(
+                "toolUseId"
+            ):
+                tool_result = tool_result_candidate
+                break
+        if tool_result is None:
+            return None
+        return [encode_bytes_values(tool_use), encode_bytes_values(tool_result)]
 
-    return json.dumps(project(left), sort_keys=True, separators=(",", ":")) == json.dumps(
-        project(right),
-        sort_keys=True,
-        separators=(",", ":"),
+    left_delivery = project(left)
+    right_delivery = project(right)
+    return (
+        left_delivery is not None
+        and right_delivery is not None
+        and json.dumps(
+            left_delivery,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        == json.dumps(
+            right_delivery,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     )

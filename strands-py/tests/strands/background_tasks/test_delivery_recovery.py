@@ -10,6 +10,7 @@ import pytest
 from strands import Agent, tool
 from strands._middleware.stages import InvokeModelContext, InvokeModelStage
 from strands.agent.conversation_manager import NullConversationManager
+from strands.background_tasks._delivery import history_contains_background_delivery, render_background_delivery
 from strands.background_tasks._record import StoredBackgroundTask, encode_stored_task
 from strands.hooks import BeforeModelCallEvent
 from strands.interrupt import Interrupt, _InterruptState
@@ -17,6 +18,7 @@ from strands.types.content import Message, Messages
 from strands.types.exceptions import ContextWindowOverflowException, EventLoopException
 from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolSpec
+from strands.vended_plugins.context_injector import ContextInjector
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 _STATE_KEY = "strands.background_tasks"
@@ -267,6 +269,76 @@ class _OverflowFirstDeliveryModel(_RecordingModel):
             **kwargs,
         ):
             yield event
+
+
+def test_history_contains_delivery_ignores_unrelated_blocks_but_requires_canonical_delivery() -> None:
+    record = _terminal_record()
+    persisted = list(copy.deepcopy(render_background_delivery(record)))
+
+    assert history_contains_background_delivery(persisted, record)
+
+    without_metadata = copy.deepcopy(persisted)
+    for message in without_metadata:
+        message.pop("metadata", None)
+    assert history_contains_background_delivery(without_metadata, record)
+    assert not history_contains_background_delivery(persisted[:1], record)
+
+    # Context injection may append text without changing the authoritative delivery blocks
+    # (https://github.com/strands-agents/stan/issues/16).
+    injected_content = copy.deepcopy(persisted)
+    injected_content[0]["content"].append({"text": "assistant context"})
+    injected_content[1]["content"].append({"text": "user context"})
+    assert history_contains_background_delivery(injected_content, record)
+
+    altered_tool_use = copy.deepcopy(persisted)
+    altered_tool_use[0]["content"][0] = {
+        "toolUse": {
+            "name": _DELIVERY_TOOL_NAME,
+            "toolUseId": record["task_id"],
+            "input": {"altered": True},
+        }
+    }
+    assert not history_contains_background_delivery(altered_tool_use, record)
+
+    altered_tool_result = copy.deepcopy(persisted)
+    altered_tool_result[1]["content"][0] = {
+        "toolResult": {
+            "toolUseId": record["task_id"],
+            "status": "success",
+            "content": [{"text": "altered result"}],
+        }
+    }
+    assert not history_contains_background_delivery(altered_tool_result, record)
+
+
+@pytest.mark.asyncio
+async def test_ready_delivery_accepts_every_turn_context_injection() -> None:
+    model = _RecordingModel([_assistant_text("Delivered.")])
+    agent = _create_ready_agent(model)
+    render_calls = 0
+
+    def render_content(_context: Any) -> str:
+        nonlocal render_calls
+        render_calls += 1
+        return "INJECTED"
+
+    ContextInjector(render_content, trigger="everyTurn").init_agent(agent)
+
+    try:
+        await agent.invoke_async("Deliver result.")
+
+        assert render_calls > 0
+        assert agent.state.get(_STATE_KEY) is None
+        exp_delivery_count = 1
+        assert _delivery_count(agent.messages) == exp_delivery_count
+        tru_injected_delivery = any(
+            any("toolResult" in content for content in message["content"])
+            and any(content.get("text", "").endswith("INJECTED") for content in message["content"])
+            for message in model.requests[0]
+        )
+        assert tru_injected_delivery
+    finally:
+        await asyncio.to_thread(agent.cleanup)
 
 
 @pytest.mark.asyncio
