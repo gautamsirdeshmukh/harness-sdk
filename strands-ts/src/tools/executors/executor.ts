@@ -1,10 +1,11 @@
 import { normalizeError } from '../../errors.js'
 import { AfterToolCallEvent, BeforeToolCallEvent, ToolStreamUpdateEvent } from '../../hooks/events.js'
-import { InterruptError, interruptFromAgent } from '../../interrupt.js'
+import { InterruptError, interruptFromState, type InterruptState } from '../../interrupt.js'
 import { createMiddlewareInterrupt } from '../../middleware/interrupt.js'
 import { ExecuteToolStage } from '../../middleware/index.js'
 import { deepCopy } from '../../types/json.js'
 import { TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { setEventInterruptState } from '../../hooks/event-state.js'
 
 import type { Agent } from '../../agent/agent.js'
 import type { ToolUseData } from '../../hooks/events.js'
@@ -33,6 +34,18 @@ export interface ToolExecutorOptions {
   readonly meter: Meter
   /** Cancellation signal scoped to this executor invocation. */
   readonly cancelSignal: AbortSignal
+}
+
+interface ToolExecutorState {
+  readonly interruptState: InterruptState
+  readonly beforeToolCallCompleted: boolean
+}
+
+const stateByOptions = new WeakMap<ToolExecutorOptions, ToolExecutorState>()
+
+/** Associates internal execution state with one executor invocation. @internal */
+export function setToolExecutorState(options: ToolExecutorOptions, state: ToolExecutorState): void {
+  stateByOptions.set(options, state)
 }
 
 /**
@@ -88,46 +101,52 @@ export abstract class ToolExecutor {
       input: toolUseBlock.input,
     }
 
+    let effectiveTool = registryTool
+    const executionState = getToolExecutorState(options)
+    let beforeToolCallCompleted = executionState.beforeToolCallCompleted
     while (true) {
-      const beforeToolCallEvent = new BeforeToolCallEvent({
-        agent: options.agent,
-        toolUse,
-        tool: registryTool,
-        invocationState,
-      })
-      yield beforeToolCallEvent
-
-      toolUse = {
-        ...beforeToolCallEvent.toolUse,
-        toolUseId: toolUseBlock.toolUseId,
-      }
-      // selectedTool takes precedence over resolving a hook-renamed toolUse;
-      // otherwise retain the original registry lookup. Resolve before cancellation
-      // so AfterToolCallEvent reports the same effective tool on every path.
-      const effectiveTool =
-        beforeToolCallEvent.selectedTool ??
-        (toolUse.name !== toolUseBlock.name ? options.agent.toolRegistry.get(toolUse.name) : registryTool)
-
-      if (beforeToolCallEvent.cancel) {
-        const cancelMessage =
-          typeof beforeToolCallEvent.cancel === 'string' ? beforeToolCallEvent.cancel : 'Tool cancelled by hook'
-        const cancelResult = new ToolResultBlock({
-          toolUseId: toolUse.toolUseId,
-          status: 'error',
-          content: [new TextBlock(cancelMessage)],
-        })
-        const afterToolCallEvent = new AfterToolCallEvent({
+      if (!beforeToolCallCompleted) {
+        const beforeToolCallEvent = new BeforeToolCallEvent({
           agent: options.agent,
           toolUse,
-          tool: effectiveTool,
-          result: cancelResult,
+          tool: registryTool,
           invocationState,
         })
-        yield afterToolCallEvent
-        if (this._shouldRetry(afterToolCallEvent, options.cancelSignal)) {
-          continue
+        setEventInterruptState(beforeToolCallEvent, executionState.interruptState)
+        yield beforeToolCallEvent
+
+        toolUse = {
+          ...beforeToolCallEvent.toolUse,
+          toolUseId: toolUseBlock.toolUseId,
         }
-        return this._normalizeToolResultId(afterToolCallEvent.result, toolUseBlock.toolUseId)
+        // selectedTool takes precedence over resolving a hook-renamed toolUse;
+        // otherwise retain the original registry lookup. Resolve before cancellation
+        // so AfterToolCallEvent reports the same effective tool on every path.
+        effectiveTool =
+          beforeToolCallEvent.selectedTool ??
+          (toolUse.name !== toolUseBlock.name ? options.agent.toolRegistry.get(toolUse.name) : registryTool)
+
+        if (beforeToolCallEvent.cancel) {
+          const cancelMessage =
+            typeof beforeToolCallEvent.cancel === 'string' ? beforeToolCallEvent.cancel : 'Tool cancelled by hook'
+          const cancelResult = new ToolResultBlock({
+            toolUseId: toolUse.toolUseId,
+            status: 'error',
+            content: [new TextBlock(cancelMessage)],
+          })
+          const afterToolCallEvent = new AfterToolCallEvent({
+            agent: options.agent,
+            toolUse,
+            tool: effectiveTool,
+            result: cancelResult,
+            invocationState,
+          })
+          yield afterToolCallEvent
+          if (this._shouldRetry(afterToolCallEvent, options.cancelSignal)) {
+            continue
+          }
+          return this._normalizeToolResultId(afterToolCallEvent.result, toolUseBlock.toolUseId)
+        }
       }
 
       const toolResult = this._normalizeToolResultId(
@@ -146,6 +165,7 @@ export abstract class ToolExecutor {
       yield afterToolCallEvent
 
       if (this._shouldRetry(afterToolCallEvent, options.cancelSignal)) {
+        beforeToolCallCompleted = false
         continue
       }
 
@@ -183,7 +203,7 @@ export abstract class ToolExecutor {
     for (const [toolUseId, result] of completedToolResults) {
       serializedResults[toolUseId] = result.toJSON()
     }
-    options.agent._interruptState.setPendingToolExecution({
+    getToolExecutorState(options).interruptState.setPendingToolExecution({
       assistantMessageData: assistantMessage.toJSON(),
       completedToolResults: serializedResults,
     })
@@ -202,7 +222,7 @@ export abstract class ToolExecutor {
       invocationState,
       cancelSignal: options.cancelSignal,
       interrupt: createMiddlewareInterrupt(
-        options.agent._interruptState,
+        getToolExecutorState(options).interruptState,
         `middleware:executeTool:${toolUse.toolUseId}`
       ),
     }
@@ -258,7 +278,12 @@ export abstract class ToolExecutor {
           invocationState,
           cancelSignal: options.cancelSignal,
           interrupt: <T = JSONValue>(params: InterruptParams): T =>
-            interruptFromAgent<T>(options.agent, `tool:${toolUse.toolUseId}:${params.name}`, params, 'tool'),
+            interruptFromState<T>(
+              getToolExecutorState(options).interruptState,
+              `tool:${toolUse.toolUseId}:${params.name}`,
+              params,
+              'tool'
+            ),
         }
 
         // Iterate manually to wrap raw tool events at the agent boundary and
@@ -307,4 +332,13 @@ export abstract class ToolExecutor {
       })
     }
   }
+}
+
+function getToolExecutorState(options: ToolExecutorOptions): ToolExecutorState {
+  return (
+    stateByOptions.get(options) ?? {
+      interruptState: options.agent._interruptState,
+      beforeToolCallCompleted: false,
+    }
+  )
 }

@@ -7,16 +7,17 @@ import type { Message, StopReason } from '../types/messages.js'
 /**
  * One internal input contribution to an agent or model invocation.
  *
- * When both callbacks are supplied, exactly one runs once. Callback failures
- * are logged and do not change the agent result.
+ * A consumption failure rejects every input in the same continuation batch.
  */
 interface ContinuationInput {
   /** Input that normalizes to one or more complete messages. */
   readonly args: InvokeArgs
-  /** Runs after the input is incorporated into agent history. */
-  readonly onAppended?: () => void | Promise<void>
-  /** Runs when the input cannot be incorporated into agent history. */
-  readonly onAbandoned?: (reason: unknown) => void | Promise<void>
+  /** Requires the successful provider request when consuming this input. */
+  readonly requireModelRequest?: boolean
+  /** Runs after the input is incorporated into a successful model request. */
+  readonly onConsumed?: (modelRequestMessages?: readonly Message[]) => void | Promise<void>
+  /** Runs when the input cannot be incorporated into a successful model request. */
+  readonly onRejected?: (reason: unknown) => void | Promise<void>
 }
 
 interface ContinuationState {
@@ -33,11 +34,11 @@ const deferredInputsByAgent = new WeakMap<LocalAgent, ContinuationInput[]>()
  * @internal
  */
 export const continuations = {
-  abandon,
-  addInput,
+  add,
   combine,
-  markAppended,
+  consume,
   prepare,
+  reject,
 }
 
 /**
@@ -46,7 +47,7 @@ export const continuations = {
  * @param event - Event that owns the continuation input.
  * @param input - Input and optional settlement callbacks to register.
  */
-function addInput(event: AfterInvocationEvent | BeforeModelCallEvent, input: ContinuationInput): void {
+function add(event: AfterInvocationEvent | BeforeModelCallEvent, input: ContinuationInput): void {
   const state = stateByEvent.get(event) ?? { inputs: [] }
   state.inputs.push(input)
   stateByEvent.set(event, state)
@@ -89,7 +90,7 @@ async function prepare(
       messages.push(...normalized)
       acceptedInputs.push(input)
     } catch (error) {
-      await notifyAbandoned(input, error)
+      await notifyRejected(input, error)
     }
   }
 
@@ -128,34 +129,45 @@ function combine(
 }
 
 /**
- * Marks prepared inputs as incorporated into agent history.
+ * Marks prepared inputs as incorporated into a successful model request.
  *
- * @param event - Event whose prepared inputs were appended.
- * @returns A promise that resolves after append callbacks finish.
+ * @param event - Event whose prepared inputs were consumed.
+ * @param modelRequestMessages - Messages sent to the model provider.
+ * @returns A promise that resolves after consumption callbacks finish.
  */
-async function markAppended(event: AfterInvocationEvent | BeforeModelCallEvent | undefined): Promise<void> {
+async function consume(
+  event: AfterInvocationEvent | BeforeModelCallEvent | undefined,
+  modelRequestMessages?: readonly Message[]
+): Promise<void> {
   if (!event || !stateByEvent.get(event)?.messages) return
-  for (const input of consumeInputs(event)) {
+  const inputs = consumeInputs(event)
+  if (modelRequestMessages === undefined && inputs.some((input) => input.requireModelRequest === true)) {
+    const error = new Error('Continuation consumption requires a successful model request')
+    await rejectInputs(inputs, error)
+    throw error
+  }
+
+  for (let index = 0; index < inputs.length; index++) {
+    const input = inputs[index]!
     try {
-      await input.onAppended?.()
+      await input.onConsumed?.(modelRequestMessages)
     } catch (error) {
-      logger.warn(`error=<${error}> | continuation append callback failed`)
+      await rejectInputs(inputs.slice(index + 1), error)
+      throw error
     }
   }
 }
 
 /**
- * Abandons the inputs registered for an event.
+ * Rejects prepared inputs that cannot be incorporated into a successful model request.
  *
- * @param event - Event whose inputs should be abandoned.
- * @param reason - Reason the inputs could not be incorporated.
- * @returns A promise that resolves after abandonment callbacks finish.
+ * @param event - Event whose prepared inputs should be rejected.
+ * @param reason - Reason the inputs could not be consumed.
+ * @returns A promise that resolves after rejection callbacks finish.
  */
-async function abandon(event: AfterInvocationEvent | BeforeModelCallEvent | undefined, reason: unknown): Promise<void> {
+async function reject(event: AfterInvocationEvent | BeforeModelCallEvent | undefined, reason: unknown): Promise<void> {
   if (!event) return
-  for (const input of consumeInputs(event)) {
-    await notifyAbandoned(input, reason)
-  }
+  await rejectInputs(consumeInputs(event), reason)
 }
 
 function consumeInputs(event: AfterInvocationEvent | BeforeModelCallEvent): readonly ContinuationInput[] {
@@ -187,10 +199,16 @@ function isCompleteMessageInput(messages: readonly Message[]): boolean {
   return pendingToolUseIds.size === 0
 }
 
-async function notifyAbandoned(input: ContinuationInput, reason: unknown): Promise<void> {
+async function notifyRejected(input: ContinuationInput, reason: unknown): Promise<void> {
   try {
-    await input.onAbandoned?.(reason)
+    await input.onRejected?.(reason)
   } catch (error) {
-    logger.warn(`error=<${error}> | continuation abandon callback failed`)
+    logger.warn(`error=<${error}> | continuation rejection callback failed`)
+  }
+}
+
+async function rejectInputs(inputs: readonly ContinuationInput[], reason: unknown): Promise<void> {
+  for (const input of inputs) {
+    await notifyRejected(input, reason)
   }
 }

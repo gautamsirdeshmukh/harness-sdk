@@ -4,8 +4,9 @@ import { type Tool, ToolStreamEvent } from '../tools/tool.js'
 import type { JSONValue } from '../types/json.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import type { Model } from '../models/model.js'
-import { interruptFromAgent, type Interrupt, type Interruptible } from '../interrupt.js'
+import { interruptFromAgent, interruptFromState, type Interrupt, type Interruptible } from '../interrupt.js'
 import type { InterruptParams } from '../types/interrupt.js'
+import { getEventInterruptState } from './event-state.js'
 
 /**
  * Agent hook events.
@@ -290,6 +291,15 @@ export class BeforeToolCallEvent extends HookableEvent implements Interruptible 
    * @returns The user's response when resuming from an interrupt
    */
   interrupt<T = JSONValue>(params: InterruptParams): T {
+    const interruptState = getEventInterruptState(this)
+    if (interruptState) {
+      return interruptFromState<T>(
+        interruptState,
+        `hook:beforeToolCall:${this.toolUse.toolUseId}:${params.name}`,
+        params,
+        'hook'
+      )
+    }
     return interruptFromAgent<T>(
       this.agent,
       `hook:beforeToolCall:${this.toolUse.toolUseId}:${params.name}`,
@@ -759,6 +769,10 @@ export class BeforeToolsEvent extends HookableEvent implements Interruptible {
    * @returns The user's response when resuming from an interrupt
    */
   interrupt<T = JSONValue>(params: InterruptParams): T {
+    const interruptState = getEventInterruptState(this)
+    if (interruptState) {
+      return interruptFromState<T>(interruptState, `hook:beforeTools:${params.name}`, params, 'hook')
+    }
     return interruptFromAgent<T>(this.agent, `hook:beforeTools:${params.name}`, params, 'hook')
   }
 

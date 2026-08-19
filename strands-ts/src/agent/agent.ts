@@ -90,11 +90,14 @@ import {
 import { StructuredOutputTool, STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { ConcurrentToolExecutor } from '../tools/executors/concurrent.js'
 import { SequentialToolExecutor } from '../tools/executors/sequential.js'
+import { setToolExecutorState } from '../tools/executors/executor.js'
 import { AgentAsTool } from './agent-as-tool.js'
 import type { AgentAsToolOptions } from './agent-as-tool.js'
 import { ToolCaller } from './tool-caller.js'
 import type { ToolCallerProxy } from './tool-caller.js'
 import { continuations } from './continuation.js'
+import { registerDetachedToolExecutor, type DetachedToolInput, type DetachedToolOutcome } from './detached-tool.js'
+import { getInvocationResult, setEventInterruptState, setInvocationResult } from '../hooks/event-state.js'
 
 import type { z } from 'zod'
 import { MemoryManager } from '../memory/memory-manager.js'
@@ -108,7 +111,7 @@ import { CancelledError, CheckpointError } from '../errors.js'
 import { DefaultModelRetryStrategy } from '../retry/default-model-retry-strategy.js'
 import type { RetryStrategy } from '../retry/retry-strategy.js'
 import { warnOnDuplicateRetryStrategyTypes } from '../retry/retry-strategy.js'
-import { InterruptError, InterruptState } from '../interrupt.js'
+import { InterruptError, InterruptState, type Interrupt } from '../interrupt.js'
 import { Checkpoint, type CheckpointPosition, type CheckpointResumeContent } from '../experimental/checkpoint.js'
 import { isInterruptResponseContent, type InterruptResponseContent } from '../types/interrupt.js'
 import { takeSnapshot as takeSnapshotInternal, loadSnapshot as loadSnapshotInternal } from './snapshot.js'
@@ -502,6 +505,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private readonly _checkpointing: boolean
   /** Direct tool caller — created via {@link ToolCaller.create} factory. */
   private readonly _toolCaller: ToolCallerProxy
+  private readonly _traceAttributes: Record<string, AttributeValue> | undefined
 
   /**
    * Creates an instance of the Agent.
@@ -623,7 +627,8 @@ export class Agent implements LocalAgent, InvokableAgent {
     this._structuredOutputSchema = config?.structuredOutputSchema
 
     // Initialize tracer - OTEL returns no-op tracer if not configured
-    this._tracer = new Tracer(config?.traceAttributes)
+    this._traceAttributes = config?.traceAttributes
+    this._tracer = new Tracer(this._traceAttributes)
 
     // Initialize meter for local metrics accumulation
     this._meter = new Meter()
@@ -638,6 +643,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     this._toolCaller = ToolCaller.create(this, (message, invocationState) =>
       this._appendMessageAndFireHooks(message, invocationState)
     )
+    registerDetachedToolExecutor(this, (input) => this._executeDetachedTool(input))
 
     this._initialized = false
   }
@@ -1118,45 +1124,40 @@ export class Agent implements LocalAgent, InvokableAgent {
               : 'invocation denied by hook'
           const message = new Message({ role: 'assistant', content: [new TextBlock(cancelText)] })
           yield this._appendMessage(message, invocationState)
-          const afterEvent = new AfterInvocationEvent({ agent: this, invocationState })
-          await continuations.abandon(
-            continuationEvent,
-            new Error('Continuation was not incorporated into agent history')
-          )
-          continuationEvent = afterEvent
-          await this._invokeCallbacks(afterEvent)
-          yield afterEvent
-          return new AgentResult({
-            stopReason: 'endTurn',
-            lastMessage: message,
-            traces: this._tracer.localTraces,
-            metrics: this._meter.metrics,
-            invocationState,
-          })
+          const cancelled = await this._completeCancelledInvocation(message, invocationState, continuationEvent)
+          continuationEvent = cancelled.event
+          yield cancelled.event
+          return cancelled.result
         }
 
         let result: AgentResult | undefined
+        let resultBeforeCallbacks: AgentResult | undefined
         let caughtError: Error | undefined
         const afterInvocationEvent = new AfterInvocationEvent({ agent: this, invocationState })
+        setEventInterruptState(afterInvocationEvent, this._interruptState)
         try {
           result = yield* this._streamWithMiddleware(currentArgs, resolvedOptions, invocationState, continuationEvent)
+          resultBeforeCallbacks = result
+          setInvocationResult(afterInvocationEvent, result)
         } catch (error) {
           caughtError = error as Error
         } finally {
           // AfterInvocationEvent always fires — even on error or consumer break. Outside middleware.
           // Invoke hooks (so .resume can be set) but don't yield in finally (yields in finally
           // suspend the generator on consumer break instead of completing cleanup).
-          await continuations.abandon(
+          await continuations.reject(
             continuationEvent,
             new Error('Continuation was not incorporated into agent history')
           )
           continuationEvent = afterInvocationEvent
           await this._invokeCallbacks(afterInvocationEvent)
+          result = resolveInvocationResult(afterInvocationEvent, result)
         }
 
         // Yield outside finally — in JS, a `yield` inside `finally` suspends the generator
         // mid-cleanup when the consumer breaks, preventing subsequent cleanup code from running.
         // This line is only reached on normal completion or caught error, never on consumer break.
+        yield* createAddedInterruptEvents(this, invocationState, resultBeforeCallbacks, result)
         yield afterInvocationEvent
 
         // Re-throw after hooks have fired
@@ -1167,7 +1168,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         const stopReason = result!.stopReason
         const allowsContinuation = stopReason === 'endTurn' || stopReason === 'stopSequence'
         if (!allowsContinuation && stopReason !== 'interrupt') {
-          await continuations.abandon(afterInvocationEvent, new Error(`Continuation abandoned after ${stopReason}`))
+          await continuations.reject(afterInvocationEvent, new Error(`Continuation abandoned after ${stopReason}`))
         }
 
         const hasContinuation =
@@ -1194,12 +1195,32 @@ export class Agent implements LocalAgent, InvokableAgent {
         return result!
       }
     } finally {
-      await continuations.abandon(
+      await continuations.reject(
         continuationEvent,
         new Error('Agent stream closed before continuation input was incorporated into agent history')
       )
       this._isInvoking = false
     }
+  }
+
+  private async _completeCancelledInvocation(
+    message: Message,
+    invocationState: InvocationState,
+    continuationEvent?: AfterInvocationEvent
+  ): Promise<{ readonly event: AfterInvocationEvent; readonly result: AgentResult }> {
+    const event = new AfterInvocationEvent({ agent: this, invocationState })
+    const result = new AgentResult({
+      stopReason: 'endTurn',
+      lastMessage: message,
+      traces: this._tracer.localTraces,
+      metrics: this._meter.metrics,
+      invocationState,
+    })
+    await continuations.reject(continuationEvent, new Error('Continuation was not incorporated into agent history'))
+    setInvocationResult(event, result)
+    setEventInterruptState(event, this._interruptState)
+    await this._invokeCallbacks(event)
+    return { event, result: resolveInvocationResult(event, result)! }
   }
 
   /**
@@ -1567,7 +1588,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             assistantMessage = pendingExecution.assistantMessage
             completedToolResults = pendingExecution.completedToolResults
           } else {
-            const modelResult = yield* this._invokeModel(invocationState, structuredOutputChoice)
+            const modelResult = yield* this._invokeModel(invocationState, structuredOutputChoice, continuationEvent)
 
             if (modelResult.stopReason !== 'toolUse') {
               // Schema set, we already forced, and the model still refused.
@@ -1998,7 +2019,8 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   private async *_invokeModel(
     invocationState: InvocationState,
-    toolChoice?: ToolChoice
+    toolChoice?: ToolChoice,
+    continuationEvent?: AfterInvocationEvent
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
     const streamOptions: StreamOptions = { toolSpecs, modelState: this.modelState }
@@ -2013,13 +2035,10 @@ export class Agent implements LocalAgent, InvokableAgent {
 
     let attemptCount = 1
     while (true) {
-      // Estimate input tokens for the upcoming model call (non-fatal if estimation fails)
-      let projectedInputTokens: number | undefined
-      try {
-        projectedInputTokens = await this._estimateInputTokens(streamOptions)
-      } catch (e) {
-        logger.debug(`error=<${e}> | token estimation failed, proceeding without estimate`)
-      }
+      let projectedInputTokens = await this._estimateModelInputTokens(
+        streamOptions,
+        'token estimation failed, proceeding without estimate'
+      )
 
       const beforeModelCallEvent = new BeforeModelCallEvent({
         agent: this,
@@ -2027,6 +2046,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         invocationState,
         ...(projectedInputTokens !== undefined && { projectedInputTokens }),
       })
+      setEventInterruptState(beforeModelCallEvent, this._interruptState)
       let modelContinuation: readonly Message[] | undefined
       try {
         yield beforeModelCallEvent
@@ -2035,7 +2055,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         )
       } finally {
         if (modelContinuation === undefined) {
-          await continuations.abandon(
+          await continuations.reject(
             beforeModelCallEvent,
             new Error('Agent stream closed before continuation input was incorporated into agent history')
           )
@@ -2043,7 +2063,8 @@ export class Agent implements LocalAgent, InvokableAgent {
       }
 
       if (beforeModelCallEvent.cancel) {
-        await continuations.abandon(beforeModelCallEvent, new Error('Continuation abandoned by BeforeModelCallEvent'))
+        await continuations.reject(continuationEvent, new Error('Continuation abandoned by BeforeModelCallEvent'))
+        await continuations.reject(beforeModelCallEvent, new Error('Continuation abandoned by BeforeModelCallEvent'))
         const cancelText =
           typeof beforeModelCallEvent.cancel === 'string' ? beforeModelCallEvent.cancel : 'model call denied by hook'
         const message = new Message({ role: 'assistant', content: [new TextBlock(cancelText)] })
@@ -2068,86 +2089,126 @@ export class Agent implements LocalAgent, InvokableAgent {
       yield* await this._appendContinuationMessages(modelContinuation ?? [], beforeModelCallEvent, invocationState)
 
       if (modelContinuation !== undefined) {
-        try {
-          projectedInputTokens = await this._estimateInputTokens(streamOptions)
-        } catch (error) {
-          projectedInputTokens = undefined
-          logger.debug(
-            `error=<${error}> | token estimation failed after continuation input, proceeding without estimate`
-          )
-        }
+        projectedInputTokens = await this._estimateModelInputTokens(
+          streamOptions,
+          'token estimation failed after continuation input, proceeding without estimate'
+        )
       }
 
-      try {
-        const result = yield* this._invokeModelWithMiddleware(invocationState, toolChoice, projectedInputTokens)
-
-        // Accumulate token usage and model latency metrics
-        this._meter.updateCycle(result.metadata)
-
-        yield new ModelMessageEvent({
-          agent: this,
-          message: result.message,
-          stopReason: result.stopReason,
-          invocationState,
-        })
-
-        // Handle user content redaction if guardrails blocked input
-        if (result.redaction?.userMessage) {
-          this._redactLastMessage(result.redaction.userMessage)
-        }
-
-        const stopData: ModelStopData = {
-          message: result.message,
-          stopReason: result.stopReason,
-          ...(result.redaction && { redaction: result.redaction }),
-        }
-
-        const afterModelCallEvent = new AfterModelCallEvent({
-          agent: this,
-          model: this.model,
-          attemptCount,
-          stopData,
-          invocationState,
-        })
-        yield afterModelCallEvent
-
-        if (afterModelCallEvent.retry) {
-          attemptCount += 1
-          continue
-        }
-
-        return result
-      } catch (error) {
-        const modelError = normalizeError(error)
-
-        // Create error event
-        const errorEvent = new AfterModelCallEvent({
-          agent: this,
-          model: this.model,
-          attemptCount,
-          error: modelError,
-          invocationState,
-        })
-
-        // Yield error event - stream will invoke hooks
-        yield errorEvent
-
-        // Let CancelledError propagate directly — no retry
-        // (we emit the AfterModelCall because we already emitted Before and we guarentee the pair)
-        if (error instanceof CancelledError) {
-          throw error
-        }
-
-        // After yielding, hooks have been invoked and may have set retry
-        if (errorEvent.retry) {
-          attemptCount += 1
-          continue
-        }
-
-        // Re-throw error
-        throw error
+      const invocationResult = yield* this._invokeModelAttempt(
+        invocationState,
+        attemptCount,
+        beforeModelCallEvent,
+        continuationEvent,
+        toolChoice,
+        projectedInputTokens
+      )
+      if (!invocationResult) {
+        attemptCount += 1
+        continue
       }
+
+      const { result, modelRequestMessages } = invocationResult
+      const retry = yield* this._completeModelCall(
+        invocationState,
+        attemptCount,
+        result,
+        modelRequestMessages,
+        continuationEvent,
+        beforeModelCallEvent
+      )
+      if (retry) {
+        attemptCount += 1
+        continue
+      }
+
+      return result
     }
+  }
+
+  private async _estimateModelInputTokens(
+    streamOptions: StreamOptions,
+    failureMessage: string
+  ): Promise<number | undefined> {
+    try {
+      return await this._estimateInputTokens(streamOptions)
+    } catch (error) {
+      logger.debug(`error=<${error}> | ${failureMessage}`)
+      return undefined
+    }
+  }
+
+  private async *_invokeModelAttempt(
+    invocationState: InvocationState,
+    attemptCount: number,
+    beforeModelCallEvent: BeforeModelCallEvent,
+    continuationEvent?: AfterInvocationEvent,
+    toolChoice?: ToolChoice,
+    projectedInputTokens?: number
+  ): AsyncGenerator<
+    AgentStreamEvent,
+    { readonly result: StreamAggregatedResult; readonly modelRequestMessages?: readonly Message[] } | undefined,
+    undefined
+  > {
+    try {
+      return yield* this._invokeModelWithMiddleware(invocationState, toolChoice, projectedInputTokens)
+    } catch (error) {
+      await continuations.reject(continuationEvent, error)
+      await continuations.reject(beforeModelCallEvent, error)
+      const errorEvent = new AfterModelCallEvent({
+        agent: this,
+        model: this.model,
+        attemptCount,
+        error: normalizeError(error),
+        invocationState,
+      })
+      yield errorEvent
+
+      if (error instanceof CancelledError) throw error
+      if (errorEvent.retry) return undefined
+      throw error
+    }
+  }
+
+  private async *_completeModelCall(
+    invocationState: InvocationState,
+    attemptCount: number,
+    result: StreamAggregatedResult,
+    modelRequestMessages: readonly Message[] | undefined,
+    continuationEvent: AfterInvocationEvent | undefined,
+    beforeModelCallEvent: BeforeModelCallEvent
+  ): AsyncGenerator<AgentStreamEvent, boolean, undefined> {
+    const continuationSettlement = await settleContinuations(
+      [continuationEvent, beforeModelCallEvent],
+      modelRequestMessages
+    )
+
+    this._meter.updateCycle(result.metadata)
+    yield new ModelMessageEvent({
+      agent: this,
+      message: result.message,
+      stopReason: result.stopReason,
+      invocationState,
+    })
+
+    if (result.redaction?.userMessage) {
+      this._redactLastMessage(result.redaction.userMessage)
+    }
+    const afterModelCallEvent = new AfterModelCallEvent({
+      agent: this,
+      model: this.model,
+      attemptCount,
+      stopData: {
+        message: result.message,
+        stopReason: result.stopReason,
+        ...(result.redaction && { redaction: result.redaction }),
+      },
+      invocationState,
+    })
+    yield afterModelCallEvent
+
+    if (continuationSettlement.failed) throw continuationSettlement.error
+    return afterModelCallEvent.retry === true
   }
 
   /**
@@ -2164,7 +2225,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationState: InvocationState,
     toolChoice?: ToolChoice,
     projectedInputTokens?: number
-  ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
+  ): AsyncGenerator<
+    AgentStreamEvent,
+    { readonly result: StreamAggregatedResult; readonly modelRequestMessages?: readonly Message[] },
+    undefined
+  > {
     const context: InvokeModelContext = {
       agent: this,
       messages: this.messages.map((msg) => msg.clone()),
@@ -2180,6 +2245,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     // cannot affect modelState at any point (before or after next()).
     const modelStateSnapshot = this.modelState.getAll()
     let tempModelState: StateStore | undefined
+    let modelRequestMessages: readonly Message[] | undefined
 
     // async function* doesn't bind lexical `this`; capture for the terminal callback.
     // eslint-disable-next-line @typescript-eslint/no-this-alias
@@ -2188,6 +2254,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       InvokeModelStage,
       context,
       async function* (ctx: InvokeModelContext): AsyncGenerator<AgentStreamEvent, InvokeModelResult, undefined> {
+        modelRequestMessages = ctx.messages.map((message) => message.clone())
         const modelId = self.model.modelId
         const modelSpan = self._tracer.startModelInvokeSpan({
           messages: ctx.messages as Message[],
@@ -2239,7 +2306,10 @@ export class Agent implements LocalAgent, InvokableAgent {
       loadStateSerializable(this.modelState, serializeStateSerializable(tempModelState))
     }
 
-    return middlewareResult.result
+    return {
+      result: middlewareResult.result,
+      ...(modelRequestMessages !== undefined && { modelRequestMessages }),
+    }
   }
 
   /**
@@ -2305,16 +2375,22 @@ export class Agent implements LocalAgent, InvokableAgent {
   private async *executeTools(
     assistantMessage: Message,
     invocationState: InvocationState,
-    completedToolResults?: Map<string, ToolResultBlock>
+    completedToolResults?: Map<string, ToolResultBlock>,
+    cancelSignal: AbortSignal = this._abortSignal,
+    interruptState: InterruptState = this._interruptState,
+    beforeToolCallCompleted = false,
+    tracer: Tracer = this._tracer,
+    meter: Meter = this._meter
   ): AsyncGenerator<AgentStreamEvent, ToolsExecutionResult, undefined> {
     const beforeToolsEvent = new BeforeToolsEvent({ agent: this, message: assistantMessage, invocationState })
+    setEventInterruptState(beforeToolsEvent, interruptState)
     try {
       yield beforeToolsEvent
     } catch (error) {
       // Store pending state before re-throwing so the agent can resume from this point.
       // The error must still propagate to _stream which handles the interrupt stop.
       if (error instanceof InterruptError) {
-        this._interruptState.setPendingToolExecution({
+        interruptState.setPendingToolExecution({
           assistantMessageData: assistantMessage.toJSON(),
           completedToolResults: {},
         })
@@ -2340,7 +2416,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         ? typeof beforeToolsEvent.cancel === 'string'
           ? beforeToolsEvent.cancel
           : 'Tool cancelled by hook'
-        : this.isCancelled
+        : cancelSignal.aborted
           ? 'Tool execution cancelled'
           : undefined
 
@@ -2351,22 +2427,21 @@ export class Agent implements LocalAgent, InvokableAgent {
           yield new ToolResultEvent({ agent: this, result, invocationState })
         }
       } else {
-        yield* this._toolExecutor.execute(
-          {
-            agent: this,
-            middlewareRegistry: this._middlewareRegistry,
-            tracer: this._tracer,
-            meter: this._meter,
-            cancelSignal: this._abortSignal,
-          },
-          {
-            toolUseBlocks,
-            toolResultBlocks,
-            invocationState,
-            assistantMessage,
-            ...(completedToolResults && { completedToolResults }),
-          }
-        )
+        const executorOptions = {
+          agent: this,
+          middlewareRegistry: this._middlewareRegistry,
+          tracer,
+          meter,
+          cancelSignal,
+        }
+        setToolExecutorState(executorOptions, { interruptState, beforeToolCallCompleted })
+        yield* this._toolExecutor.execute(executorOptions, {
+          toolUseBlocks,
+          toolResultBlocks,
+          invocationState,
+          assistantMessage,
+          ...(completedToolResults && { completedToolResults }),
+        })
       }
     } finally {
       toolResultMessage = new Message({ role: 'user', content: toolResultBlocks })
@@ -2375,6 +2450,97 @@ export class Agent implements LocalAgent, InvokableAgent {
     }
 
     return { message: toolResultMessage, afterToolsEvent, toolsSkipped }
+  }
+
+  /** Executes one detached tool through the normal tool lifecycle. */
+  private async _executeDetachedTool(input: DetachedToolInput): Promise<DetachedToolOutcome> {
+    const interruptState = input.interruptState ? InterruptState.fromJSON(input.interruptState) : new InterruptState()
+    const tracer = new Tracer(this._traceAttributes)
+    const meter = new Meter()
+    meter.startNewInvocation()
+    const taskSpan = tracer.startBackgroundTaskSpan({
+      ...input.background,
+      toolName: input.toolUseBlock.name,
+      agentId: this.id,
+      ...(input.originSpanContext && { originSpanContext: input.originSpanContext }),
+    })
+    const pendingExecution = interruptState.getPendingExecution()
+    const assistantMessage =
+      pendingExecution?.assistantMessage ?? new Message({ role: 'assistant', content: [input.toolUseBlock] })
+    interruptState.clearPendingToolExecution()
+    const generator = this.executeTools(
+      assistantMessage,
+      input.invocationState,
+      pendingExecution?.completedToolResults,
+      input.cancelSignal,
+      interruptState,
+      true,
+      tracer,
+      meter
+    )
+
+    try {
+      const outcome = await tracer.withSpanContext(taskSpan, () =>
+        this._consumeDetachedToolExecution(generator, interruptState, input.background.taskId)
+      )
+      if (input.cancelSignal.aborted) {
+        const abortedOutcome = input.classifyAbort()
+        tracer.endBackgroundTaskSpan(taskSpan, {
+          outcome: abortedOutcome,
+          ...(abortedOutcome === 'failed' && { error: normalizeError(input.cancelSignal.reason) }),
+        })
+      } else if ('interruptState' in outcome) {
+        tracer.endBackgroundTaskSpan(taskSpan, { outcome: 'suspended' })
+      } else if (outcome.status === 'error') {
+        tracer.endBackgroundTaskSpan(taskSpan, {
+          outcome: 'failed',
+          error: new Error('Background task tool execution failed'),
+        })
+      } else {
+        tracer.endBackgroundTaskSpan(taskSpan, { outcome: 'completed' })
+      }
+      return outcome
+    } catch (error) {
+      tracer.endBackgroundTaskSpan(taskSpan, { outcome: 'failed', error: normalizeError(error) })
+      throw error
+    }
+  }
+
+  private async _consumeDetachedToolExecution(
+    generator: AsyncGenerator<AgentStreamEvent, ToolsExecutionResult, undefined>,
+    interruptState: InterruptState,
+    taskId: string
+  ): Promise<DetachedToolOutcome> {
+    try {
+      let next = await generator.next()
+      while (!next.done) {
+        try {
+          if (next.value instanceof HookableEvent) {
+            await this._hooksRegistry.invokeCallbacks(next.value)
+          }
+          next = await generator.next()
+        } catch (error) {
+          if (!(error instanceof InterruptError)) throw error
+          next = await generator.throw(error)
+        }
+      }
+      const result = next.value.message.content.find(
+        (block): block is ToolResultBlock => block.type === 'toolResultBlock'
+      )
+      if (!result) {
+        throw new Error(`Detached background task '${taskId}' did not produce a tool result`)
+      }
+      return result
+    } catch (error) {
+      if (!(error instanceof InterruptError)) throw error
+      for (const interrupt of error.interrupts) {
+        interruptState.registerInterrupt(interrupt)
+      }
+      interruptState.activate()
+      return { interruptState: interruptState.toJSON() }
+    } finally {
+      await generator.return(undefined as never)
+    }
   }
 
   /**
@@ -2538,7 +2704,6 @@ export class Agent implements LocalAgent, InvokableAgent {
         events.push(messageEvent)
       }
     }
-    await continuations.markAppended(continuationEvent)
     return events
   }
 
@@ -2546,6 +2711,49 @@ export class Agent implements LocalAgent, InvokableAgent {
     const lastMessage = this.messages[this.messages.length - 1]
     return lastMessage?.role === 'user'
   }
+}
+
+async function settleContinuations(
+  events: readonly (AfterInvocationEvent | BeforeModelCallEvent | undefined)[],
+  modelRequestMessages?: readonly Message[]
+): Promise<{ readonly failed: false } | { readonly failed: true; readonly error: unknown }> {
+  for (let index = 0; index < events.length; index++) {
+    try {
+      await continuations.consume(events[index], modelRequestMessages)
+    } catch (error) {
+      for (const remainingEvent of events.slice(index + 1)) {
+        await continuations.reject(remainingEvent, error)
+      }
+      return { failed: true, error }
+    }
+  }
+  return { failed: false }
+}
+
+function resolveInvocationResult(
+  event: AfterInvocationEvent,
+  fallback: AgentResult | undefined
+): AgentResult | undefined {
+  return getInvocationResult(event) ?? fallback
+}
+
+function findAddedInterrupts(
+  beforeCallbacks: AgentResult | undefined,
+  afterCallbacks: AgentResult | undefined
+): readonly Interrupt[] {
+  const existingIds = new Set(beforeCallbacks?.interrupts?.map((interrupt) => interrupt.id) ?? [])
+  return afterCallbacks?.interrupts?.filter((interrupt) => !existingIds.has(interrupt.id)) ?? []
+}
+
+function createAddedInterruptEvents(
+  agent: Agent,
+  invocationState: InvocationState,
+  beforeCallbacks: AgentResult | undefined,
+  afterCallbacks: AgentResult | undefined
+): readonly InterruptEvent[] {
+  return findAddedInterrupts(beforeCallbacks, afterCallbacks).map(
+    (interrupt) => new InterruptEvent({ agent, interrupt, invocationState })
+  )
 }
 
 const INVALID_TOOL_NAME_PLACEHOLDER = 'INVALID_TOOL_NAME'

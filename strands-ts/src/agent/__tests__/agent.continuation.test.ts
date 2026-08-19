@@ -29,8 +29,8 @@ describe('Agent continuation input', () => {
   it('combines multiple follow-up contributions with public resume input', async () => {
     const model = textModel('initial', 'final')
     const requests = captureRequests(model)
-    const appended: string[] = []
-    const abandoned = vi.fn()
+    const consumed: string[] = []
+    const rejected = vi.fn()
     const agent = new Agent({ model, printer: false })
     let resumed = false
 
@@ -38,16 +38,16 @@ describe('Agent continuation input', () => {
       if (resumed) return
       resumed = true
       for (const args of ['first', 'second']) {
-        continuations.addInput(event, {
+        continuations.add(event, {
           args,
-          onAppended: () => {
-            appended.push(args)
+          onConsumed: () => {
+            consumed.push(args)
           },
         })
       }
-      continuations.addInput(event, {
+      continuations.add(event, {
         args: [new Message({ role: 'assistant', content: [new TextBlock('invalid')] })],
-        onAbandoned: abandoned,
+        onRejected: rejected,
       })
       event.resume = 'public'
     })
@@ -57,8 +57,8 @@ describe('Agent continuation input', () => {
     expect(requests[1]?.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
     expect(textOf(requests[1]!.at(-1)!)).toBe('firstsecondpublic')
     expect(agent.messages.map(textOf)).toEqual(['start', 'initial', 'firstsecondpublic', 'final'])
-    expect(appended).toEqual(['first', 'second'])
-    expect(abandoned).toHaveBeenCalledWith(
+    expect(consumed).toEqual(['first', 'second'])
+    expect(rejected).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Continuation input must contain a complete message sequence' })
     )
   })
@@ -74,8 +74,8 @@ describe('Agent continuation input', () => {
       .addTurn({ type: 'textBlock', text: 'resumed' })
       .addTurn({ type: 'textBlock', text: 'continued' })
     const requests = captureRequests(model)
-    const appended = vi.fn()
-    const abandoned = vi.fn()
+    const consumed = vi.fn()
+    const rejected = vi.fn()
     const tool = createMockTool('confirmTool', (context) => {
       const response = context.interrupt<string>({ name: 'confirm', reason: 'Confirm?' })
       return `confirmed:${response}`
@@ -86,22 +86,22 @@ describe('Agent continuation input', () => {
     agent.addHook(AfterInvocationEvent, (event) => {
       if (added) return
       added = true
-      continuations.addInput(event, {
+      continuations.add(event, {
         args: 'pending',
-        onAppended: appended,
-        onAbandoned: abandoned,
+        onConsumed: consumed,
+        onRejected: rejected,
       })
     })
 
     const interruptResult = await agent.invoke('start')
 
     expect(interruptResult.stopReason).toBe('interrupt')
-    expect(appended).not.toHaveBeenCalled()
-    expect(abandoned).not.toHaveBeenCalled()
+    expect(consumed).not.toHaveBeenCalled()
+    expect(rejected).not.toHaveBeenCalled()
 
     await expect(agent.invoke('invalid resume')).rejects.toThrow('Agent is in an interrupted state')
-    expect(appended).not.toHaveBeenCalled()
-    expect(abandoned).not.toHaveBeenCalled()
+    expect(consumed).not.toHaveBeenCalled()
+    expect(rejected).not.toHaveBeenCalled()
 
     const finalResult = await agent.invoke([
       new InterruptResponseContent({
@@ -112,8 +112,8 @@ describe('Agent continuation input', () => {
 
     expect(finalResult.stopReason).toBe('endTurn')
     expect(textOf(requests[2]!.at(-1)!)).toBe('pending')
-    expect(appended).toHaveBeenCalledOnce()
-    expect(abandoned).not.toHaveBeenCalled()
+    expect(consumed).toHaveBeenCalledOnce()
+    expect(rejected).not.toHaveBeenCalled()
   })
 
   it('preserves an unrecognized stop reason instead of continuing', async () => {
@@ -122,14 +122,14 @@ describe('Agent continuation input', () => {
     const model = new MockMessageModel()
       .addTurn({ type: 'textBlock', text: 'partial' }, { stopReason })
       .addTurn({ type: 'textBlock', text: 'unreachable' })
-    const abandoned = vi.fn()
+    const rejected = vi.fn()
     const agent = new Agent({ model, printer: false })
     let added = false
 
     agent.addHook(AfterInvocationEvent, (event) => {
       if (added) return
       added = true
-      continuations.addInput(event, { args: 'pending', onAbandoned: abandoned })
+      continuations.add(event, { args: 'pending', onRejected: rejected })
     })
 
     const result = await agent.invoke('start')
@@ -138,12 +138,12 @@ describe('Agent continuation input', () => {
       stopReason: result.stopReason,
       modelCalls: model.callCount,
       messages: agent.messages.map(textOf),
-      abandoned: abandoned.mock.calls.length,
+      rejected: rejected.mock.calls.length,
     }).toEqual({
       stopReason,
       modelCalls: 1,
       messages: ['start', 'partial'],
-      abandoned: 1,
+      rejected: 1,
     })
   })
 
@@ -171,7 +171,7 @@ describe('Agent continuation input', () => {
         }),
       ],
     })
-    const appended = vi.fn()
+    const consumed = vi.fn()
     const addedMessages: Message[] = []
     const agent = new Agent({ model, printer: false })
 
@@ -179,12 +179,12 @@ describe('Agent continuation input', () => {
       addedMessages.push(event.message)
     })
     agent.addHook(BeforeModelCallEvent, (event) => {
-      continuations.addInput(event, { args: 'guidance' })
-      continuations.addInput(event, {
+      continuations.add(event, { args: 'guidance' })
+      continuations.add(event, {
         args: [toolUse, toolResult],
-        onAppended: () => {
+        onConsumed: () => {
           expect(agent.messages).toEqual([expect.any(Message), toolUse, toolResult])
-          appended()
+          consumed()
         },
       })
     })
@@ -205,25 +205,50 @@ describe('Agent continuation input', () => {
       expect.any(Message),
     ])
     expect(addedMessages).toContain(agent.messages[0])
-    expect(appended).toHaveBeenCalledOnce()
+    expect(consumed).toHaveBeenCalledOnce()
   })
 
-  it('abandons follow-up input when the stream closes before it is appended', async () => {
-    const abandoned = vi.fn()
+  it('rejects follow-up input when the stream closes before it is consumed', async () => {
+    const rejected = vi.fn()
     const agent = new Agent({ model: textModel('initial', 'unreachable'), printer: false })
     let added = false
 
     agent.addHook(AfterInvocationEvent, (event) => {
       if (added) return
       added = true
-      continuations.addInput(event, { args: 'pending', onAbandoned: abandoned })
+      continuations.add(event, { args: 'pending', onRejected: rejected })
     })
 
     for await (const event of agent.stream('start')) {
       if (event instanceof MessageAddedEvent) break
     }
 
-    expect(abandoned).toHaveBeenCalledOnce()
+    expect(rejected).toHaveBeenCalledOnce()
     expect(agent.messages.map(textOf)).toEqual(['start'])
+  })
+
+  it('settles each contribution exactly once when one consumption callback fails', async () => {
+    const rejected = [vi.fn(), vi.fn(), vi.fn()]
+    const consumed = [vi.fn(), vi.fn(() => Promise.reject(new Error('commit failed'))), vi.fn()]
+    const agent = new Agent({ model: textModel('unreachable'), printer: false })
+
+    agent.addHook(BeforeModelCallEvent, (event) => {
+      for (const index of [0, 1, 2]) {
+        continuations.add(event, {
+          args: `input-${index}`,
+          onConsumed: consumed[index]!,
+          onRejected: rejected[index]!,
+        })
+      }
+    })
+
+    await expect(agent.invoke('start')).rejects.toThrow('commit failed')
+
+    expect(consumed[0]).toHaveBeenCalledOnce()
+    expect(consumed[1]).toHaveBeenCalledOnce()
+    expect(consumed[2]).not.toHaveBeenCalled()
+    expect(rejected[0]).not.toHaveBeenCalled()
+    expect(rejected[1]).not.toHaveBeenCalled()
+    expect(rejected[2]).toHaveBeenCalledWith(expect.objectContaining({ message: 'commit failed' }))
   })
 })
