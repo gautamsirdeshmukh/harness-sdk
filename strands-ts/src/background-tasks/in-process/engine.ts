@@ -1,7 +1,7 @@
 import { normalizeError } from '../../errors.js'
 import { BackgroundTaskNotFoundError } from '../errors.js'
 import { isInProcessTaskTerminalStatus, validateStoredInProcessTask } from './record.js'
-import type { InProcessTaskEngineConfig, StoredInProcessTask, TaskExecutionOutcome } from './types.js'
+import type { InProcessTaskEngineOptions, StoredInProcessTask, TaskExecutionOutcome } from './types.js'
 
 // Node.js treats delays above the signed 32-bit limit as 1ms.
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
@@ -18,9 +18,9 @@ interface TaskWaiter<Descriptor, Result, State> {
   reject(error: unknown): void
 }
 
-/** Bounded in-process task execution. @internal */
+/** Runs and tracks bounded in-process tasks. @internal */
 export class InProcessTaskEngine<Descriptor, Result, State> {
-  private readonly _config: InProcessTaskEngineConfig<Descriptor, Result, State>
+  private readonly _options: InProcessTaskEngineOptions<Descriptor, Result, State>
   private readonly _tasks = new Map<string, StoredInProcessTask<Descriptor, Result, State>>()
   private readonly _queue = new Set<string>()
   private readonly _activeExecutions = new Map<string, ActiveExecution>()
@@ -31,14 +31,26 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
   private _shutdown: Promise<void> | undefined
   private _failure: { readonly error: unknown } | undefined
 
-  constructor(config: InProcessTaskEngineConfig<Descriptor, Result, State>) {
-    if (!Number.isSafeInteger(config.maxConcurrency) || config.maxConcurrency <= 0) {
-      throw new TypeError(`maxConcurrency must be a positive finite integer, got ${config.maxConcurrency}`)
+  /**
+   * Creates an in-process task engine.
+   *
+   * @param options - Execution limits and callbacks supplied by the task manager.
+   * @throws TypeError if the concurrency or timeout configuration is invalid.
+   */
+  constructor(options: InProcessTaskEngineOptions<Descriptor, Result, State>) {
+    if (!Number.isSafeInteger(options.maxConcurrency) || options.maxConcurrency <= 0) {
+      throw new TypeError(`maxConcurrency must be a positive finite integer, got ${options.maxConcurrency}`)
     }
-    if (config.timeout !== Infinity) assertTimerDelay('timeout', config.timeout)
-    this._config = config
+    if (options.timeout !== Infinity) assertTimerDelay('timeout', options.timeout)
+    this._options = options
   }
 
+  /**
+   * Initializes the engine and fails restored tasks that were interrupted before reaching a terminal state.
+   *
+   * @param restoredTasks - Persisted task records to restore.
+   * @throws Error if a restored record is invalid or cannot be persisted during recovery.
+   */
   initialize(restoredTasks: readonly StoredInProcessTask<Descriptor, Result, State>[] = []): void {
     if (this._initialized) return
     this._throwIfFailed()
@@ -69,6 +81,13 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
     }
   }
 
+  /**
+   * Submits a task for execution, returning an existing task when its idempotency key matches.
+   *
+   * @param admission - Task descriptor and optional idempotency key.
+   * @returns A snapshot of the admitted or matching task.
+   * @throws Error if the engine cannot admit or persist the task.
+   */
   submit(admission: {
     readonly descriptor: Descriptor
     readonly idempotencyKey?: string
@@ -95,17 +114,34 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
     return snapshot(stored)
   }
 
+  /**
+   * Gets a task by ID.
+   *
+   * @param taskId - ID of the task to retrieve.
+   * @returns A snapshot of the task, or `undefined` when it does not exist.
+   */
   get(taskId: string): StoredInProcessTask<Descriptor, Result, State> | undefined {
     this._assertInitialized()
     const task = this._tasks.get(taskId)
     return task ? snapshot(task) : undefined
   }
 
+  /**
+   * Lists the tasks tracked by this engine.
+   *
+   * @returns Snapshots of the tracked tasks.
+   */
   list(): readonly StoredInProcessTask<Descriptor, Result, State>[] {
     this._assertInitialized()
     return [...this._tasks.values()].map(snapshot)
   }
 
+  /**
+   * Removes a terminal task.
+   *
+   * @param taskId - ID of the task to remove.
+   * @throws Error if the task does not exist or has not reached a terminal state.
+   */
   remove(taskId: string): void {
     this._assertInitialized()
     const task = this._requireTask(taskId)
@@ -115,6 +151,14 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
     this._tasks.delete(taskId)
   }
 
+  /**
+   * Cancels a non-terminal task and aborts its active execution.
+   *
+   * @param taskId - ID of the task to cancel.
+   * @param options - Cancellation options passed to the active execution.
+   * @returns A snapshot of the cancelled task, or the unchanged task if it was already terminal.
+   * @throws Error if the task does not exist or the engine has failed.
+   */
   cancel(taskId: string, options: { readonly reason: string }): StoredInProcessTask<Descriptor, Result, State> {
     this._assertInitialized()
     this._throwIfFailed()
@@ -129,13 +173,21 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
     const activeExecution = this._activeExecutions.get(taskId)
     if (activeExecution?.timeout) {
       clearTimeout(activeExecution.timeout)
-      delete activeExecution.timeout
     }
     activeExecution?.controller.abort(options.reason)
     this._wakeIdleWaiters()
     return task
   }
 
+  /**
+   * Waits until a task pauses or reaches a terminal state.
+   *
+   * @param taskId - ID of the task to wait for.
+   * @param options - Optional cancellation signal for the wait.
+   * @returns A snapshot of the paused or terminal task.
+   * @throws Error if the engine is not initialized, the task does not exist, or the engine fails.
+   * @throws The cancellation signal's reason if the wait is aborted.
+   */
   async wait(
     taskId: string,
     options?: { readonly cancelSignal?: AbortSignal }
@@ -145,14 +197,14 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
     if (isWaitComplete(current)) return current
     this._throwIfFailed()
     const signal = options?.cancelSignal
-    if (signal?.aborted) throw getAbortReason(signal)
+    if (signal?.aborted) throw signal.reason
 
     return new Promise((resolve, reject) => {
       const waiters = this._taskWaiters.get(taskId) ?? new Set()
       const onAbort = (): void => {
         waiters.delete(waiter)
         if (waiters.size === 0) this._taskWaiters.delete(taskId)
-        waiter.reject(getAbortReason(signal!))
+        waiter.reject(signal!.reason)
       }
       const waiter: TaskWaiter<Descriptor, Result, State> = {
         resolve: (task) => {
@@ -170,11 +222,27 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
     })
   }
 
+  /**
+   * Waits until no tasks are queued or executing.
+   *
+   * @param options - Optional cancellation signal for the wait.
+   * @returns A promise that resolves when the engine is idle.
+   * @throws Error if the engine is not initialized or fails.
+   * @throws The cancellation signal's reason if the wait is aborted.
+   */
   async waitForIdle(options?: { readonly cancelSignal?: AbortSignal }): Promise<void> {
     this._assertInitialized()
     await this._waitForIdle(options?.cancelSignal)
   }
 
+  /**
+   * Updates a paused task and queues it when the update marks it ready.
+   *
+   * @param taskId - ID of the paused task.
+   * @param update - Applies input to the paused state and determines whether execution can resume.
+   * @returns A snapshot of the updated task.
+   * @throws Error if the task is not paused, has no state, or cannot be persisted.
+   */
   resume(
     taskId: string,
     update: (state: Exclude<State, undefined>) => { readonly state: Exclude<State, undefined>; readonly ready: boolean }
@@ -185,10 +253,10 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
         throw new Error('Background task execution is closed')
       }
       if (record.status !== 'paused') {
-        throw new Error(`Background task '${taskId}' cannot transition: status is '${record.status}', not 'paused'`)
+        throw new Error(`Background task '${taskId}' cannot be resumed: status is '${record.status}', not 'paused'`)
       }
       if (record.state === undefined) {
-        throw new Error(`Background task '${taskId}' cannot transition: paused state is missing`)
+        throw new Error(`Background task '${taskId}' cannot be resumed: paused state is missing`)
       }
       const resumed = update(record.state)
       record.state = resumed.state
@@ -199,6 +267,14 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
     return task
   }
 
+  /**
+   * Closes task admission, cancels non-terminal tasks, and waits for active executions to settle.
+   *
+   * @param options - Maximum time to wait for active executions.
+   * @returns A promise that resolves when shutdown completes.
+   * @throws TypeError if the timeout is invalid.
+   * @throws Error if shutdown does not complete before the timeout.
+   */
   async shutdown(options: { readonly timeout: number }): Promise<void> {
     assertTimerDelay('shutdown timeout', options.timeout)
     if (this._shutdown) return this._shutdown
@@ -217,7 +293,7 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
 
   private _startQueuedTasks(): void {
     if (this._closed) return
-    while (this._activeExecutions.size < this._config.maxConcurrency && this._queue.size > 0) {
+    while (this._activeExecutions.size < this._options.maxConcurrency && this._queue.size > 0) {
       const taskId = this._queue.values().next().value!
       this._queue.delete(taskId)
       const activeExecution: ActiveExecution = {
@@ -244,7 +320,7 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
       return true
     })!
 
-    if (Number.isFinite(this._config.timeout)) {
+    if (Number.isFinite(this._options.timeout)) {
       activeExecution.timeout = setTimeout(() => {
         delete activeExecution.timeout
         try {
@@ -252,12 +328,12 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
         } catch (error) {
           this._rejectWaiters(taskId, error)
         }
-      }, this._config.timeout)
+      }, this._options.timeout)
     }
 
     let outcome: TaskExecutionOutcome<Result, State>
     try {
-      outcome = await this._config.execute({
+      outcome = await this._options.execute({
         taskId,
         descriptor: working.descriptor,
         ...(working.state !== undefined && { state: working.state }),
@@ -319,7 +395,7 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
   }
 
   private _timeoutTask(taskId: string, activeExecution: ActiveExecution): void {
-    const reason = `Timed out after ${this._config.timeout}ms`
+    const reason = `Timed out after ${this._options.timeout}ms`
     const task = this._updateTask(taskId, (record) => {
       if (record.status !== 'working') return false
       record.status = 'failed'
@@ -399,7 +475,7 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
   private _persistTask(task: StoredInProcessTask<Descriptor, Result, State>): void {
     validateStoredInProcessTask(task)
     try {
-      this._config.onTaskUpdated(snapshot(task))
+      this._options.onTaskUpdated(snapshot(task))
     } catch (error) {
       this._failEngine(error)
       throw error
@@ -430,11 +506,11 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
   private async _waitForIdle(cancelSignal?: AbortSignal, ignoreFailure = false): Promise<void> {
     while (this._queue.size > 0 || this._activeExecutions.size > 0) {
       if (!ignoreFailure) this._throwIfFailed()
-      if (cancelSignal?.aborted) throw getAbortReason(cancelSignal)
+      if (cancelSignal?.aborted) throw cancelSignal.reason
       await new Promise<void>((resolve, reject) => {
         const onAbort = (): void => {
           this._idleWaiters.delete(onIdle)
-          reject(getAbortReason(cancelSignal!))
+          reject(cancelSignal!.reason)
         }
         const onIdle = (): void => {
           cancelSignal?.removeEventListener('abort', onAbort)
@@ -456,6 +532,7 @@ export class InProcessTaskEngine<Descriptor, Result, State> {
   }
 }
 
+/** Creates a copy so callers cannot change the task stored by the engine. */
 function snapshot<Descriptor, Result, State>(
   task: StoredInProcessTask<Descriptor, Result, State>
 ): StoredInProcessTask<Descriptor, Result, State> {
@@ -464,10 +541,6 @@ function snapshot<Descriptor, Result, State>(
 
 function isWaitComplete(task: Pick<StoredInProcessTask<unknown, unknown, unknown>, 'status'>): boolean {
   return task.status === 'paused' || isInProcessTaskTerminalStatus(task.status)
-}
-
-function getAbortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException('Observation aborted', 'AbortError')
 }
 
 function getExecutionFailureMessage(error: unknown): string {

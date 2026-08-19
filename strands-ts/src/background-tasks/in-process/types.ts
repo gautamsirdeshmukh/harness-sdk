@@ -4,13 +4,13 @@ export const TASK_STATUSES = ['queued', 'working', 'paused', 'completed', 'faile
 /** Background task lifecycle status. @internal */
 export type TaskStatus = (typeof TASK_STATUSES)[number]
 
-/** Configuration for bounded in-process task execution. @internal */
-export interface InProcessTaskEngineConfig<Descriptor, Result, State> {
+/** Options and callbacks for bounded in-process task execution. @internal */
+export interface InProcessTaskEngineOptions<Descriptor, Result, State> {
   /** Maximum number of task executions that may run concurrently. */
   readonly maxConcurrency: number
   /** Per-execution timeout in milliseconds, or `Infinity` to disable timeouts. */
   readonly timeout: number
-  /** Executes one task. */
+  /** Runs one task execution and returns whether it completed, paused, or failed. */
   readonly execute: (
     context: InProcessTaskExecutionContext<Descriptor, State>
   ) => Promise<TaskExecutionOutcome<Result, State>>

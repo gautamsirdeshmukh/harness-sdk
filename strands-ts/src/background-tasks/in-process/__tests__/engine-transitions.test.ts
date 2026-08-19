@@ -22,7 +22,7 @@ describe('InProcessTaskEngine', () => {
       const taskWaiting = engine.wait(task.taskId, { cancelSignal: taskController.signal })
       const idleWaiting = engine.waitForIdle({ cancelSignal: idleController.signal })
 
-      taskController.abort(null)
+      taskController.abort()
       idleController.abort(new Error('stop idle observation'))
       await expect(taskWaiting).rejects.toMatchObject({ name: 'AbortError' })
       await expect(idleWaiting).rejects.toThrow('stop idle observation')

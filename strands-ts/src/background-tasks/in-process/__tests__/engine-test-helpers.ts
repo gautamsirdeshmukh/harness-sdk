@@ -1,7 +1,7 @@
 import { expect } from 'vitest'
 import { InProcessTaskEngine } from '../engine.js'
 import type {
-  InProcessTaskEngineConfig,
+  InProcessTaskEngineOptions,
   InProcessTaskExecutionContext,
   StoredInProcessTask,
   TaskExecutionOutcome,
@@ -30,7 +30,7 @@ const engines = new Set<TestEngine>()
 
 export function createEngine(
   execute: (context: TestContext) => Promise<TestOutcome>,
-  options: Partial<InProcessTaskEngineConfig<TestDescriptor, TestResult, TestState>> = {}
+  options: Partial<InProcessTaskEngineOptions<TestDescriptor, TestResult, TestState>> = {}
 ): TestEngine {
   const engine = new InProcessTaskEngine<TestDescriptor, TestResult, TestState>({
     maxConcurrency: 2,
