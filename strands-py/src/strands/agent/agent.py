@@ -405,6 +405,18 @@ class Agent(AgentBase, LocalAgent):
             context_manager, conversation_manager, plugins
         )
 
+        from .._context_manager.context_manager import ContextManager as _ContextManager
+
+        if isinstance(context_manager, _ContextManager):
+            self._context_manager: ContextManager | None = context_manager
+        elif plugins and any(isinstance(plugin, _ContextManager) for plugin in plugins):
+            raise ValueError(
+                "A ContextManager was passed via plugins; pass it through the context_manager parameter instead "
+                "so session persistence can detect it"
+            )
+        else:
+            self._context_manager = None
+
         self.conversation_manager: ConversationManager
         if self.model.stateful:
             self.conversation_manager = NullConversationManager()
@@ -762,6 +774,11 @@ class Agent(AgentBase, LocalAgent):
     def storage(self) -> Storage | None:
         """Default storage backend for agent subsystems."""
         return self._storage
+
+    @property
+    def context_manager(self) -> "ContextManager | None":
+        """The ContextManager plugin, if one is registered on this agent."""
+        return self._context_manager
 
     @property
     def session_id(self) -> str:

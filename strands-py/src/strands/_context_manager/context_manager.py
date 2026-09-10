@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
+from ..storage.storage import _EPHEMERAL
 from ..types.exceptions import ContextWindowOverflowException
 from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
 from .stash import Stash
@@ -72,15 +73,30 @@ class ContextManager(Plugin):
         )
 
         self._stash: Stash | None = None
+        self._stash_is_durable: bool = False
         self._retrieval_tool_use_ids: set[str] = set()
         self._backfill_done: bool = False
 
         super().__init__()
 
+    @property
+    def stash(self) -> Stash | None:
+        """The L1 stash instance, if stash is enabled and the agent has been initialized."""
+        return self._stash
+
+    @property
+    def stash_is_durable(self) -> bool:
+        """Whether the stash is backed by durable storage that survives process restarts.
+
+        When True, stash data does not need to be embedded in session snapshots.
+        """
+        return self._stash_is_durable
+
     def init_agent(self, agent: Agent) -> None:
         """Register strategy hooks for proactive compression and overflow recovery."""
         if not self._stash_disabled:
             storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
+            self._stash_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
             self._stash = Stash(storage, agent.session_id, agent.agent_id)
 
         # Stash hook must register before strategy init so it captures pre-offload content.
