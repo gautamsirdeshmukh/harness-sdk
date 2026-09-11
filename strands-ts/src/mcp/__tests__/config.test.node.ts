@@ -50,6 +50,24 @@ describe('McpClient.loadServers', () => {
     vi.clearAllMocks()
   })
 
+  it('skips invalid task settings when that server allows errors and keeps valid servers', async () => {
+    const clients = await McpClient.loadServers({
+      invalid: { url: 'https://invalid.example/mcp', tasksConfig: { ttl: 0 }, continueOnError: true },
+      valid: { url: 'https://valid.example/mcp' },
+    })
+    expect(clients).toHaveLength(1)
+    expect(clients[0]!.continueOnError).toBe(false)
+  })
+
+  it('rejects invalid task settings when that server overrides lenient defaults', async () => {
+    await expect(
+      McpClient.loadServers(
+        { invalid: { url: 'https://invalid.example/mcp', tasksConfig: { ttl: 0 }, continueOnError: false } },
+        { continueOnError: true }
+      )
+    ).rejects.toThrow('MCP task request timeout')
+  })
+
   describe('transport detection', () => {
     it('creates StdioClientTransport when command is present', async () => {
       const clients = await McpClient.loadServers({
@@ -314,6 +332,26 @@ describe('McpClient.loadServers', () => {
       })
 
       expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['configured_search_docs'])
+    })
+
+    it('applies per-server requestTimeouts to tool calls', async () => {
+      const [client] = await McpClient.loadServers({
+        server: {
+          command: 'node',
+          requestTimeouts: { timeout: 1234, resetTimeoutOnProgress: true },
+        },
+      })
+      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'search_docs', inputSchema: {} }] })
+      sdkClient.callTool.mockResolvedValue({ content: [] })
+
+      const [tool] = await client!.listTools()
+      await client!.callTool(tool!, {})
+
+      expect(sdkClient.callTool).toHaveBeenCalledWith(
+        { name: 'search_docs', arguments: {} },
+        { timeout: 1234, resetTimeoutOnProgress: true, onprogress: expect.any(Function) }
+      )
     })
 
     it('interpolates environment variables in prefix and filter patterns', async () => {
