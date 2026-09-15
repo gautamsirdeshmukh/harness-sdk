@@ -124,8 +124,8 @@ class _BackgroundTasks(Plugin):
     @tool(
         name=_MANAGE_TOOL_NAME,
         description=(
-            "List, inspect, or cancel background tasks. Completed results are delivered automatically; "
-            "do not poll with this tool."
+            "List, inspect, or cancel background tasks. Completed results arrive automatically as get calls; "
+            "do not call get to wait for a result."
         ),
     )
     async def _manage_background_task(
@@ -392,6 +392,7 @@ class _BackgroundTasks(Plugin):
                         {
                             "toolResult": {
                                 "toolUseId": task["task_id"],
+                                # The get succeeds even if the task failed; task status and errors are in the metadata.
                                 "status": "success",
                                 "content": _task_result_content(task),
                             }
