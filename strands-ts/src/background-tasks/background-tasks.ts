@@ -70,7 +70,7 @@ export class BackgroundTasks implements Plugin {
     this._manageTool = tool({
       name: MANAGE_TOOL_NAME,
       description:
-        'List, inspect, or cancel background tasks. Completed results arrive automatically as get calls; do not call get to wait for a result.',
+        "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. Do not poll for results.",
       inputSchema: z.object({
         mode: z.enum(['list', 'get', 'cancel']).describe('Whether to list, inspect, or cancel background tasks.'),
         taskId: z

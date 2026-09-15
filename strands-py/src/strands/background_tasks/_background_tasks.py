@@ -124,8 +124,8 @@ class _BackgroundTasks(Plugin):
     @tool(
         name=_MANAGE_TOOL_NAME,
         description=(
-            "List, inspect, or cancel background tasks. Completed results arrive automatically as get calls; "
-            "do not call get to wait for a result."
+            "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. "
+            "Do not poll for results."
         ),
     )
     async def _manage_background_task(
@@ -142,7 +142,7 @@ class _BackgroundTasks(Plugin):
                 {"task_id": task["task_id"], "tool_name": task["tool_name"], "status": task["status"]}
                 for task in self._task_snapshots()
             ]
-            return _json_tool_result({"tasks": listing})
+            return {"status": "success", "content": [{"json": {"tasks": listing}}]}
         if not task_id:
             raise TypeError(f"Task ID is required for mode '{mode}'")
         with self._tasks_lock:
@@ -152,7 +152,10 @@ class _BackgroundTasks(Plugin):
         if mode == "get":
             return {"status": "success", "content": _task_result_content(task)}
         cancelled = task if is_task_status_terminal(task["status"]) else await self._manager.cancel(task_id)
-        return _json_tool_result({"task_id": cancelled["task_id"], "status": cancelled["status"]})
+        return {
+            "status": "success",
+            "content": [{"json": {"task_id": cancelled["task_id"], "status": cancelled["status"]}}],
+        }
 
     def route_tool_call(
         self,
@@ -515,8 +518,3 @@ def _tool_error(tool_use: ToolUse, message: str) -> ToolResult:
 def _task_result_content(task: BackgroundTask) -> list[ToolResultContent]:
     metadata = {key: value for key, value in task.items() if key != "result"}
     return [{"json": metadata}, *task.get("result", {"content": []})["content"]]
-
-
-def _json_tool_result(value: Any) -> dict[str, Any]:
-    # The decorator fills in toolUseId for a result that already carries status and content.
-    return {"status": "success", "content": [{"json": value}]}
