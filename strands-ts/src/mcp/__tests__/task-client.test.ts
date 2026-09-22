@@ -184,7 +184,6 @@ async function createHarness(
     tasksConfig?: TasksConfig | false
     elicitationCallback?: ConstructorParameters<typeof McpClient>[0]['elicitationCallback']
     outputSchema?: JSONSchema
-    requestTimeouts?: ConstructorParameters<typeof McpClient>[0]['requestTimeouts']
   } = {}
 ): Promise<TaskHarness> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -194,8 +193,8 @@ async function createHarness(
     options.tasksConfig === false
       ? undefined
       : {
-          ttl: 500,
-          pollIntervalMs: 10,
+          requestTimeout: 500,
+          pollInterval: 10,
           useNotifications: false,
           ...options.tasksConfig,
         }
@@ -205,7 +204,6 @@ async function createHarness(
     transport: clientTransport,
     ...(tasksConfig !== undefined && { tasksConfig }),
     ...(options.elicitationCallback && { elicitationCallback: options.elicitationCallback }),
-    ...(options.requestTimeouts && { requestTimeouts: options.requestTimeouts }),
   })
   const tool = new McpTool({
     name: 'task_tool',
@@ -468,6 +466,7 @@ describe('McpClient SEP-2663 tasks', () => {
             elicitation: { form: {}, url: {} },
             extensions: { [TASKS_EXTENSION]: {} },
           },
+          progressToken: requests[1]!.id,
         },
       })
       expect(server.requests('tasks/get')).toEqual([])
@@ -750,6 +749,7 @@ describe('McpClient SEP-2663 tasks', () => {
           [CLIENT_CAPABILITIES_META_KEY]: {
             extensions: { [TASKS_EXTENSION]: {} },
           },
+          progressToken: callRequest.id,
         },
       })
     })
@@ -946,7 +946,7 @@ describe('McpClient SEP-2663 tasks', () => {
   describe('poll scheduling', () => {
     it('honors changing poll intervals returned by the server', async () => {
       vi.useFakeTimers()
-      const { client, server, tool } = await createHarness({ tasksConfig: { pollIntervalMs: 25 } })
+      const { client, server, tool } = await createHarness({ tasksConfig: { pollInterval: 25 } })
       server.handle('tools/call', () => createTask('working', { pollIntervalMs: 50 }))
       const states = [workingTask(1, { pollIntervalMs: 80 }), completedTask(2, 'after changing intervals')]
       server.handle('tasks/get', () => states.shift()!)
@@ -972,7 +972,7 @@ describe('McpClient SEP-2663 tasks', () => {
 
     it('uses the configured bounded default when pollIntervalMs is absent', async () => {
       vi.useFakeTimers()
-      const { client, server, tool } = await createHarness({ tasksConfig: { pollIntervalMs: 35 } })
+      const { client, server, tool } = await createHarness({ tasksConfig: { pollInterval: 35 } })
       const seed = createTask()
       delete seed.pollIntervalMs
       server.handle('tools/call', () => seed)
@@ -1134,7 +1134,7 @@ describe('McpClient SEP-2663 tasks', () => {
     it('allows input handling to outlast a wire request timeout within the overall deadline', async () => {
       vi.useFakeTimers()
       const { client, server, tool } = await createHarness({
-        tasksConfig: { timeoutMs: 1_000, ttl: 30 },
+        tasksConfig: { pollTimeout: 1_000, requestTimeout: 30 },
         elicitationCallback: async () => {
           await new Promise((resolve) => setTimeout(resolve, 60))
           return { action: 'accept', content: { value: 'approved' } }
@@ -1191,7 +1191,7 @@ describe('McpClient SEP-2663 tasks', () => {
       },
     ])('times out $name and sends $cancellations cancellations', async ({ response, cancellations }) => {
       vi.useFakeTimers()
-      const { client, server, tool } = await createHarness({ tasksConfig: { timeoutMs: 50 } })
+      const { client, server, tool } = await createHarness({ tasksConfig: { pollTimeout: 50 } })
       server.handle('tools/call', () => response)
       server.handle('tasks/cancel', () => ({ resultType: 'complete' }))
 
@@ -1209,7 +1209,7 @@ describe('McpClient SEP-2663 tasks', () => {
     it('cancels exactly once when a lifecycle request times out', async () => {
       vi.useFakeTimers()
       const { client, server, tool } = await createHarness({
-        tasksConfig: { timeoutMs: 500, ttl: 25 },
+        tasksConfig: { pollTimeout: 500, requestTimeout: 25 },
       })
       server.handle('tools/call', () => createTask('working', { pollIntervalMs: 10 }))
       server.handle('tasks/get', () => NO_RESPONSE)
@@ -1464,7 +1464,7 @@ describe('McpClient SEP-2663 tasks', () => {
       vi.useFakeTimers()
       const callback = vi.fn((): Promise<never> => new Promise(() => {}))
       const { client, server, tool } = await createHarness({
-        tasksConfig: { timeoutMs: 50 },
+        tasksConfig: { pollTimeout: 50 },
         elicitationCallback: callback,
       })
       server.handle('tools/call', () => createTask('input_required'))
@@ -1783,7 +1783,7 @@ describe('McpClient SEP-2663 tasks', () => {
 
     it('completes from notifications/tasks through subscriptions/listen', async () => {
       const { client, server, tool } = await createHarness({
-        tasksConfig: { useNotifications: true, pollIntervalMs: 100 },
+        tasksConfig: { useNotifications: true, pollInterval: 100 },
       })
       server.handle('tools/call', () => createTask('working', { pollIntervalMs: 100 }))
       server.handle('subscriptions/listen', async (request) => {
@@ -1911,6 +1911,7 @@ describe('McpClient SEP-2663 tasks', () => {
       expect(requestParams(server.requests('tools/call')[0]!)).toEqual({
         name: 'task_tool',
         arguments: {},
+        _meta: { progressToken: expect.anything() },
       })
       await expect(client.getTask(TASK_ID)).rejects.toThrow(
         `SEP-2663 task operations require negotiated MCP protocol ${MODERN_PROTOCOL_VERSION}`
@@ -1944,14 +1945,10 @@ describe('McpClient legacy task execution', () => {
     lastUpdatedAt: CREATED_AT,
   })
 
-  async function legacyHarness(
-    tasksConfig?: TasksConfig,
-    requestTimeouts?: ConstructorParameters<typeof McpClient>[0]['requestTimeouts']
-  ): Promise<TaskHarness> {
+  async function legacyHarness(tasksConfig?: TasksConfig): Promise<TaskHarness> {
     const harness = await createHarness({
       era: 'legacy',
       ...(tasksConfig && { tasksConfig }),
-      ...(requestTimeouts && { requestTimeouts }),
       capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } }, cancel: {} } },
     })
     harness.server.handle('tools/list', () => ({
@@ -1998,10 +1995,7 @@ describe('McpClient legacy task execution', () => {
     'preserves progress reset and maximum duration for legacy $method ($maximum ms)',
     async ({ method, maximum }) => {
       vi.useFakeTimers()
-      const { client, server, tool } = await legacyHarness(
-        { ttl: 65, pollTimeout: maximum },
-        { resetTimeoutOnProgress: true }
-      )
+      const { client, server, tool } = await legacyHarness({ requestTimeout: 65, pollTimeout: maximum })
       server.handle('tools/call', () => ({ task: legacyTask(method === 'tasks/get' ? 'working' : 'input_required') }))
       server.handle('tasks/result', () => ({ content: [{ type: 'text', text: 'legacy progress' }] }))
       server.handle(
@@ -2033,9 +2027,9 @@ describe('McpClient legacy task execution', () => {
     }
   )
 
-  it('lets legacy polling outlast the per-request pollTimeout', async () => {
+  it('legacy polling spans multiple requests within the overall pollTimeout', async () => {
     vi.useFakeTimers()
-    const { client, server, tool } = await legacyHarness({ ttl: 65, pollTimeout: 110 })
+    const { client, server, tool } = await legacyHarness({ requestTimeout: 65, pollTimeout: 400 })
     let polls = 0
     server.handle('tools/call', () => ({ task: { ...legacyTask('working'), pollInterval: 70 } }))
     server.handle('tasks/get', () => ({ ...legacyTask(++polls === 3 ? 'completed' : 'working'), pollInterval: 70 }))
@@ -2079,22 +2073,19 @@ describe('McpClient legacy task execution', () => {
   })
 })
 
-describe('McpClient requestTimeouts with task support', () => {
+describe('McpClient task request timeouts', () => {
   it.each([
-    { era: 'modern', tasks: true, maximum: 400 },
-    { era: 'modern', tasks: true, maximum: 65 },
-    { era: 'modern', tasks: false, maximum: 400 },
-    { era: 'legacy', tasks: true, maximum: 400 },
-    { era: 'legacy', tasks: true, maximum: 65 },
-    { era: 'legacy', tasks: false, maximum: 400 },
+    { era: 'modern', maximum: 400 },
+    { era: 'modern', maximum: 65 },
+    { era: 'legacy', maximum: 400 },
+    { era: 'legacy', maximum: 65 },
   ] as const)(
-    'resets inactivity while enforcing the total limit ($era, tasks=$tasks, maximum=$maximum)',
-    async ({ era, tasks, maximum }) => {
+    'resets inactivity while enforcing the total limit ($era, maximum=$maximum)',
+    async ({ era, maximum }) => {
       vi.useFakeTimers()
       const { client, server, tool } = await createHarness({
         era,
-        tasksConfig: tasks ? { ttl: 65 } : false,
-        requestTimeouts: { timeout: 65, maxTotalTimeout: maximum, resetTimeoutOnProgress: true },
+        tasksConfig: { requestTimeout: 65, pollTimeout: maximum },
       })
       server.handle(
         'tools/call',
@@ -2123,49 +2114,43 @@ describe('McpClient requestTimeouts with task support', () => {
 })
 
 describe('McpClient default overall task deadlines', () => {
-  it.each(['modern', 'legacy'] as const)('preserves the %s default when timeoutMs is omitted', async (era) => {
-    vi.useFakeTimers()
-    const { client, server } = await createHarness({
-      era,
-      ...(era === 'legacy' && {
-        capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } }, cancel: {} } },
-      }),
-    })
-    server.handle('tools/list', () => ({
-      ...(era === 'modern' && { resultType: 'complete', ttlMs: 0, cacheScope: 'private' }),
-      tools: [{ name: 'task_tool', inputSchema: { type: 'object' }, execution: { taskSupport: 'required' } }],
-    }))
-    const [tool] = await client.listTools()
-    const legacyState = {
-      taskId: TASK_ID,
-      status: 'working',
-      ttl: 600_000,
-      pollInterval: 100_000,
-      createdAt: CREATED_AT,
-      lastUpdatedAt: CREATED_AT,
-    }
-    server.handle('tools/call', () =>
-      era === 'modern' ? createTask('working', { pollIntervalMs: 100_000 }) : { task: legacyState }
-    )
-    server.handle('tasks/get', () => (era === 'modern' ? workingTask(0, { pollIntervalMs: 100_000 }) : legacyState))
-    server.handle('tasks/cancel', () =>
-      era === 'modern' ? { resultType: 'complete' } : { ...legacyState, status: 'cancelled' }
-    )
-    const controller = new AbortController()
-    const settled = vi.fn()
-    const result = client.callTool(tool!, {}, { signal: controller.signal }).then(settled, settled)
-    await vi.advanceTimersByTimeAsync(299_999)
-    expect(settled).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(2)
-    if (era === 'modern') {
-      expect(settled).toHaveBeenCalledWith(expect.objectContaining({ code: SdkErrorCode.RequestTimeout }))
-    } else {
+  it.each(['modern', 'legacy'] as const)(
+    'applies the default overall deadline in the %s era when pollTimeout is omitted',
+    async (era) => {
+      vi.useFakeTimers()
+      const { client, server } = await createHarness({
+        era,
+        ...(era === 'legacy' && {
+          capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } }, cancel: {} } },
+        }),
+      })
+      server.handle('tools/list', () => ({
+        ...(era === 'modern' && { resultType: 'complete', ttlMs: 0, cacheScope: 'private' }),
+        tools: [{ name: 'task_tool', inputSchema: { type: 'object' }, execution: { taskSupport: 'required' } }],
+      }))
+      const [tool] = await client.listTools()
+      const legacyState = {
+        taskId: TASK_ID,
+        status: 'working',
+        ttl: 600_000,
+        pollInterval: 100_000,
+        createdAt: CREATED_AT,
+        lastUpdatedAt: CREATED_AT,
+      }
+      server.handle('tools/call', () =>
+        era === 'modern' ? createTask('working', { pollIntervalMs: 100_000 }) : { task: legacyState }
+      )
+      server.handle('tasks/get', () => (era === 'modern' ? workingTask(0, { pollIntervalMs: 100_000 }) : legacyState))
+      server.handle('tasks/cancel', () =>
+        era === 'modern' ? { resultType: 'complete' } : { ...legacyState, status: 'cancelled' }
+      )
+      const settled = vi.fn()
+      const result = client.callTool(tool!, {}).then(settled, settled)
+      await vi.advanceTimersByTimeAsync(299_999)
       expect(settled).not.toHaveBeenCalled()
-      const reason = new Error('stop unlimited legacy task')
-      controller.abort(reason)
+      await vi.advanceTimersByTimeAsync(2)
+      expect(settled).toHaveBeenCalledWith(expect.objectContaining({ code: SdkErrorCode.RequestTimeout }))
       await result
-      expect(settled).toHaveBeenCalledWith(reason)
     }
-    await result
-  })
+  )
 })

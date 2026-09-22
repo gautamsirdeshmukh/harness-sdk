@@ -244,7 +244,7 @@ Enable automatic task execution on the same `McpClient` for modern SEP-2663 and 
 ```typescript
 await using taskTools = new McpClient({
   url: "https://example.com/mcp",
-  tasksConfig: { timeoutMs: 300_000 },
+  tasksConfig: { pollTimeout: 300_000 },
 });
 const agent = new Agent({ tools: [taskTools] });
 await agent.invoke("Run the server's task tool.");
@@ -252,20 +252,20 @@ await agent.invoke("Run the server's task tool.");
 
 `callTool()` returns the final tool result. For explicit SEP-2663 task control, use
 `callToolWithTask()`, then `getTask()`, `updateTask()`, and `cancelTask()`.
-To bound total wall-clock time, set `tasksConfig.timeoutMs`; a call's `options.timeoutMs`
-overrides that value. The existing `ttl` and `pollTimeout` names remain supported:
+To bound total wall-clock time, set `tasksConfig.pollTimeout`; a call's `options.timeoutMs`
+overrides that value. The field names and defaults match the Python SDK's `TasksConfig`
+(`ttl` remains as a deprecated alias of `requestTimeout`):
 
 | Setting | Scope | Default |
 | --- | --- | --- |
-| `ttl` | Inactivity within one request; overrides `requestTimeouts.timeout` | 60,000 ms |
-| `pollTimeout` | Maximum duration of one request; overrides `requestTimeouts.maxTotalTimeout` | 300,000 ms |
-| `timeoutMs` | Entire automatic operation, including polling and input callbacks | Modern: 300,000 ms; legacy: no overall limit |
+| `pollTimeout` | Entire automatic operation, including polling and input callbacks | 300,000 ms |
+| `requestTimeout` | Each task lifecycle request | 60,000 ms |
+| `pollInterval` | Polling delay when the server omits its interval | 1,000 ms |
 
-The first limit reached ends the wait. With `requestTimeouts.resetTimeoutOnProgress`,
-matching progress resets the inactivity timer only; neither the per-request maximum
-nor the overall deadline moves. For example, with `ttl: 10_000`, `pollTimeout: 30_000`,
-and `timeoutMs: 120_000`, progress can keep a request alive beyond 10 seconds, but
-no request may exceed 30 seconds and the whole operation cannot exceed 120 seconds.
+The first limit reached ends the wait. Matching progress resets the request timer
+only; the overall deadline never moves. For example, with `requestTimeout: 10_000`
+and `pollTimeout: 120_000`, progress can keep a request alive beyond 10 seconds,
+but the whole operation cannot exceed 120 seconds.
 
 ### Multi-Agent Orchestration
 

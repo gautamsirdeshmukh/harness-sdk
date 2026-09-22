@@ -12,7 +12,7 @@ describe('McpClient legacy MCP tasks', () => {
         args: ['--import', 'tsx', resolve('test/integ/__fixtures__/test-mcp-task-server.ts')],
         stderr: 'pipe',
       }),
-      tasksConfig: { ttl: 1_000, pollTimeout: 5_000 },
+      tasksConfig: { requestTimeout: 1_000, pollTimeout: 5_000 },
     })
 
     beforeAll(async () => {

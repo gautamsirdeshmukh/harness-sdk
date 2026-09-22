@@ -1,10 +1,4 @@
-import type {
-  McpClientConfig,
-  McpClientCredentials,
-  McpClientOptions,
-  McpRequestTimeouts,
-  TasksConfig,
-} from './client.js'
+import type { McpClientConfig, McpClientCredentials, McpClientOptions, TasksConfig } from './client.js'
 import { createDefaultSlot } from '../default-slot.js'
 
 /**
@@ -52,8 +46,6 @@ export interface McpServerConfig {
   continueOnError?: boolean
   /** Configuration for automatic task execution on modern and legacy MCP servers. */
   tasksConfig?: TasksConfig
-  /** Request timeouts applied to every tool call on this server. */
-  requestTimeouts?: McpRequestTimeouts
 }
 
 /** Options controlling how `McpClient.loadServers` translates config entries into clients. */

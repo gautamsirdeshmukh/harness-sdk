@@ -71,18 +71,6 @@ export interface RuntimeConfig {
   applicationVersion?: string
 }
 
-/** Request timeout options applied to every tool call made by the client. */
-export interface McpRequestTimeouts {
-  /** Milliseconds to wait for server activity on a request before failing. The MCP client default is 60000. */
-  timeout?: number
-
-  /** Upper bound in milliseconds on a whole request, regardless of server activity. */
-  maxTotalTimeout?: number
-
-  /** When true, progress notifications reset `timeout`; the client registers an internal progress handler so the progress token goes on the wire. */
-  resetTimeoutOnProgress?: boolean
-}
-
 /** Connection state of an MCP client. */
 export type McpConnectionState = 'disconnected' | 'connected' | 'failed'
 
@@ -130,34 +118,38 @@ const HEADER_MISMATCH_ERROR_CODE = -32_020
 /**
  * Configuration for MCP task execution.
  *
- * `ttl` and `pollTimeout` limit individual requests; `timeoutMs` bounds the complete
- * automatic operation, including polling and input callbacks. The first limit reached
- * ends the wait. Progress may reset `ttl` when `requestTimeouts.resetTimeoutOnProgress`
- * is enabled, but never extends `pollTimeout` or `timeoutMs`.
+ * `pollTimeout` bounds the complete automatic operation, including polling and input
+ * callbacks. `requestTimeout` limits each individual lifecycle request; progress resets
+ * it. The first limit reached ends the wait. A call's `options.timeoutMs` overrides
+ * `pollTimeout`.
  *
- * To bound total wall-clock time, set `timeoutMs`. A call's `options.timeoutMs`
- * overrides this setting; the individual request limits still apply.
+ * Field names and defaults match the Python SDK's `TasksConfig` (milliseconds instead
+ * of timedeltas), except that `ttl` is a deprecated alias of `requestTimeout` and no
+ * legacy wire time-to-live is sent.
  */
 export interface TasksConfig {
-  /** Request inactivity timeout in milliseconds. Overrides `requestTimeouts.timeout`; defaults to 60000. */
-  ttl?: number
-
-  /** Maximum duration of one request in milliseconds, including progress resets. Overrides `requestTimeouts.maxTotalTimeout`; defaults to 300000. */
+  /** Overall deadline in milliseconds for an automatic task operation, both protocol eras. Defaults to 300000. */
   pollTimeout?: number
 
-  /** Overall automatic task timeout in milliseconds. Defaults to 300000 for modern tasks; legacy tasks have no overall limit. */
-  timeoutMs?: number
+  /** Timeout in milliseconds for each task lifecycle request; progress resets it. Defaults to 60000. */
+  requestTimeout?: number
 
-  /** Polling delay used when the server omits its polling interval. Defaults to 1000. */
-  pollIntervalMs?: number
+  /** Polling delay in milliseconds when the server omits its polling interval. Defaults to 1000. */
+  pollInterval?: number
+
+  /**
+   * Timeout in milliseconds for each task lifecycle request.
+   *
+   * @deprecated Use `requestTimeout`, which takes precedence when both are set.
+   */
+  ttl?: number
 
   /** Whether to request modern task notifications in addition to polling. Defaults to true. */
   useNotifications?: boolean
 }
 
 interface ResolvedTasksConfig {
-  timeoutMs: number | undefined
-  maxTotalTimeoutMs: number
+  pollTimeoutMs: number
   requestTimeoutMs: number
   pollIntervalMs: number
   useNotifications: boolean
@@ -229,9 +221,6 @@ export interface McpClientOptions extends RuntimeConfig {
   /** Enables automatic execution for legacy and SEP-2663 task tools. */
   tasksConfig?: TasksConfig
 
-  /** Request timeouts applied to every tool call. Per-call options take precedence on overlap. */
-  requestTimeouts?: McpRequestTimeouts
-
   /**
    * Callback to handle server-initiated elicitation requests.
    * When provided, the client advertises elicitation support (form + url modes)
@@ -274,11 +263,18 @@ export type McpClientConfig = McpClientOptions & {
  * ```
  */
 export class McpClient {
-  /** Default task request timeout in milliseconds. */
+  /**
+   * Default task lifecycle request timeout in milliseconds.
+   *
+   * @deprecated Use {@link McpClient.DEFAULT_REQUEST_TIMEOUT}.
+   */
   public static readonly DEFAULT_TTL = 60000
 
-  /** Default maximum task request duration and modern overall timeout in milliseconds. */
+  /** Default overall task operation deadline in milliseconds. */
   public static readonly DEFAULT_POLL_TIMEOUT = 300000
+
+  /** Default task lifecycle request timeout in milliseconds. */
+  public static readonly DEFAULT_REQUEST_TIMEOUT = 60000
 
   /** Default polling interval when a task response omits `pollIntervalMs`. */
   public static readonly DEFAULT_POLL_INTERVAL_MS = 1000
@@ -321,7 +317,6 @@ export class McpClient {
   private _logHandler: (params: LoggingMessageNotificationParams) => void
   private _disableMcpInstrumentation: boolean
   private _tasksConfig: ResolvedTasksConfig | undefined
-  private _requestTimeouts: McpRequestTimeouts | undefined
   private _elicitationCallback: ElicitationCallback | undefined
   private _prefix: string | undefined
   private _toolFilters: McpToolFilters | undefined
@@ -343,8 +338,7 @@ export class McpClient {
     this._state = 'disconnected'
     this._continueOnError = args.continueOnError ?? false
     this._logHandler = args.logHandler ?? defaultLogHandler
-    this._tasksConfig = resolveTasksConfig(args.tasksConfig, args.requestTimeouts)
-    this._requestTimeouts = args.requestTimeouts
+    this._tasksConfig = resolveTasksConfig(args.tasksConfig)
     this._elicitationCallback = args.elicitationCallback
     this._prefix = args.prefix
     this._toolFilters = args.toolFilters
@@ -663,7 +657,8 @@ export class McpClient {
    * @param options - Optional settings for the request.
    * @returns The final tool result.
    * @throws {@link McpTaskCancelledError} When the server reports a cancelled task.
-   * @throws {@link ProtocolError} When the task fails with a JSON-RPC error.
+   * @throws {@link ProtocolError} When a modern task fails with a JSON-RPC error.
+   * @throws {@link SdkError} When a legacy task reports the `failed` status.
    */
   public async callTool(tool: McpTool, args: JSONValue, options?: McpCallToolOptions): Promise<JSONValue> {
     if (!this._tasksConfig) {
@@ -674,14 +669,10 @@ export class McpClient {
       return result as JSONValue
     }
 
-    let operation = this._createTaskOperation(options?.signal, options?.timeoutMs ?? this._tasksConfig.timeoutMs)
+    const operation = this._createTaskOperation(options?.signal, options?.timeoutMs ?? this._tasksConfig.pollTimeoutMs)
     try {
       throwIfAborted(operation.signal)
       await raceWithAbort(this.connect(), operation.signal)
-      if (this._client.getProtocolEra() === 'modern' && operation.deadline === Infinity) {
-        operation.dispose()
-        operation = this._createTaskOperation(options?.signal, McpClient.DEFAULT_POLL_TIMEOUT)
-      }
       const outcome = await this._callToolWithTask(
         tool,
         args,
@@ -721,7 +712,7 @@ export class McpClient {
   ): Promise<McpCallToolWithTaskResult> {
     const timeoutMs = options?.timeoutMs ?? this._tasksConfig?.requestTimeoutMs
     const operation = this._tasksConfig
-      ? this._createTaskOperation(options?.signal, options?.timeoutMs ?? this._tasksConfig.maxTotalTimeoutMs)
+      ? this._createTaskOperation(options?.signal, options?.timeoutMs ?? this._tasksConfig.pollTimeoutMs)
       : undefined
     try {
       const signal = operation?.signal ?? options?.signal
@@ -852,13 +843,16 @@ export class McpClient {
 
     return {
       result: await this._client.callTool(params, {
-        ...this._buildCallOptions(options),
         ...(options.signal && { signal: options.signal }),
         ...(options.timeoutMs !== undefined && {
           timeout: options.timeoutMs,
           maxTotalTimeout: operation
-            ? remainingTime(operation.deadline, this._tasksConfig!.maxTotalTimeoutMs)
+            ? remainingTime(operation.deadline, this._tasksConfig!.pollTimeoutMs)
             : options.timeoutMs,
+          resetTimeoutOnProgress: true,
+          // A progress token only goes on the wire when a progress handler is registered, which is
+          // what makes resetTimeoutOnProgress take effect.
+          onprogress: (): void => {},
         }),
       }),
     }
@@ -873,9 +867,13 @@ export class McpClient {
 
   private async _callLegacyTask(params: CallToolRequest['params'], operation: TaskOperation): Promise<CallToolResult> {
     const requestOptions = (): CallToolRequestOptions => ({
-      ...this._buildCallOptions({ signal: operation.signal }),
+      signal: operation.signal,
       timeout: remainingTime(operation.deadline, this._tasksConfig!.requestTimeoutMs),
-      maxTotalTimeout: remainingTime(operation.deadline, this._tasksConfig!.maxTotalTimeoutMs),
+      maxTotalTimeout: remainingTime(operation.deadline, this._tasksConfig!.pollTimeoutMs),
+      resetTimeoutOnProgress: true,
+      // A progress token only goes on the wire when a progress handler is registered, which is
+      // what makes resetTimeoutOnProgress take effect.
+      onprogress: (): void => {},
     })
     const { task } = await this._client.request(
       { method: 'tools/call', params: { ...params, task: {} } },
@@ -897,7 +895,10 @@ export class McpClient {
       }
       if (state.status === 'cancelled') throw new McpTaskCancelledError(state.statusMessage)
       if (state.status === 'failed')
-        throw new Error(`MCP task failed${state.statusMessage ? `: ${state.statusMessage}` : ''}`)
+        throw new SdkError(
+          SdkErrorCode.InvalidResult,
+          `MCP task failed${state.statusMessage ? `: ${state.statusMessage}` : ''}`
+        )
       // tasks/result delivers queued server requests when a legacy task requires input.
       return await this._client.request(
         { method: 'tasks/result', params: { taskId: task.taskId } },
@@ -922,22 +923,6 @@ export class McpClient {
     }
   }
 
-  private _buildCallOptions(options?: McpCallToolOptions): CallToolRequestOptions | undefined {
-    const timeouts = this._requestTimeouts
-    if (timeouts === undefined) return options
-    return {
-      ...(timeouts.timeout !== undefined && { timeout: timeouts.timeout }),
-      ...(timeouts.maxTotalTimeout !== undefined && { maxTotalTimeout: timeouts.maxTotalTimeout }),
-      ...(timeouts.resetTimeoutOnProgress !== undefined && {
-        resetTimeoutOnProgress: timeouts.resetTimeoutOnProgress,
-      }),
-      // A progress token only goes on the wire when a progress handler is registered, which is
-      // what makes resetTimeoutOnProgress take effect.
-      ...(timeouts.resetTimeoutOnProgress && { onprogress: (): void => {} }),
-      ...options,
-    }
-  }
-
   private async _invokeTaskTool(
     tool: McpTool,
     params: CallToolRequest['params'],
@@ -954,8 +939,8 @@ export class McpClient {
         headers: isBrowserRuntime() ? {} : buildMcpParamHeaders(toolDefinition?.inputSchema, params.arguments ?? {}),
         signal: operation.signal,
         timeoutMs: remainingTime(operation.deadline, requestTimeoutMs),
-        maxTotalTimeoutMs: remainingTime(operation.deadline, this._tasksConfig!.maxTotalTimeoutMs),
-        resetTimeoutOnProgress: this._requestTimeouts?.resetTimeoutOnProgress ?? false,
+        maxTotalTimeoutMs: remainingTime(operation.deadline, this._tasksConfig!.pollTimeoutMs),
+        resetTimeoutOnProgress: true,
       })
     }
 
@@ -1044,7 +1029,7 @@ export class McpClient {
     params: Record<string, unknown>,
     options?: McpTaskRequestOptions
   ): Promise<unknown> {
-    const timeoutMs = options?.timeoutMs ?? this._tasksConfig?.requestTimeoutMs ?? McpClient.DEFAULT_TTL
+    const timeoutMs = options?.timeoutMs ?? this._tasksConfig?.requestTimeoutMs ?? McpClient.DEFAULT_REQUEST_TIMEOUT
     assertPositiveDuration(timeoutMs, 'MCP task request timeout')
     const operation = this._createTaskOperation(
       options?.signal,
@@ -1390,25 +1375,22 @@ export class McpClient {
 
   private _createTaskOperation(
     externalSignal: AbortSignal | undefined,
-    timeoutMs: number | undefined,
+    timeoutMs: number,
     timeoutError?: Error
   ): TaskOperation {
-    if (timeoutMs !== undefined) assertPositiveDuration(timeoutMs, 'MCP task overall timeout')
+    assertPositiveDuration(timeoutMs, 'MCP task overall timeout')
     const controller = new AbortController()
     this._taskControllers.add(controller)
-    const deadline = timeoutMs === undefined ? Infinity : Date.now() + timeoutMs
+    const deadline = Date.now() + timeoutMs
     const abortFromExternal = (): void => controller.abort(abortReason(externalSignal))
-    const timeout =
-      timeoutMs === undefined
-        ? undefined
-        : setTimeout(() => {
-            controller.abort(
-              timeoutError ??
-                new SdkError(SdkErrorCode.RequestTimeout, `MCP task did not complete within ${timeoutMs}ms`, {
-                  timeoutMs,
-                })
-            )
-          }, timeoutMs)
+    const timeout = setTimeout(() => {
+      controller.abort(
+        timeoutError ??
+          new SdkError(SdkErrorCode.RequestTimeout, `MCP task did not complete within ${timeoutMs}ms`, {
+            timeoutMs,
+          })
+      )
+    }, timeoutMs)
 
     if (externalSignal?.aborted) {
       abortFromExternal()
@@ -1445,21 +1427,16 @@ class TaskClient extends Client {
   }
 }
 
-function resolveTasksConfig(
-  config: TasksConfig | undefined,
-  requestTimeouts?: McpRequestTimeouts
-): ResolvedTasksConfig | undefined {
+function resolveTasksConfig(config: TasksConfig | undefined): ResolvedTasksConfig | undefined {
   if (config === undefined) return undefined
 
   const resolved = {
-    timeoutMs: config.timeoutMs,
-    maxTotalTimeoutMs: config.pollTimeout ?? requestTimeouts?.maxTotalTimeout ?? McpClient.DEFAULT_POLL_TIMEOUT,
-    requestTimeoutMs: config.ttl ?? requestTimeouts?.timeout ?? McpClient.DEFAULT_TTL,
-    pollIntervalMs: config.pollIntervalMs ?? McpClient.DEFAULT_POLL_INTERVAL_MS,
+    pollTimeoutMs: config.pollTimeout ?? McpClient.DEFAULT_POLL_TIMEOUT,
+    requestTimeoutMs: config.requestTimeout ?? config.ttl ?? McpClient.DEFAULT_REQUEST_TIMEOUT,
+    pollIntervalMs: config.pollInterval ?? McpClient.DEFAULT_POLL_INTERVAL_MS,
     useNotifications: config.useNotifications ?? true,
   }
-  if (resolved.timeoutMs !== undefined) assertPositiveDuration(resolved.timeoutMs, 'MCP task overall timeout')
-  assertPositiveDuration(resolved.maxTotalTimeoutMs, 'MCP task request maximum timeout')
+  assertPositiveDuration(resolved.pollTimeoutMs, 'MCP task overall timeout')
   assertPositiveDuration(resolved.requestTimeoutMs, 'MCP task request timeout')
   assertPositiveDuration(resolved.pollIntervalMs, 'MCP task poll interval')
   return resolved

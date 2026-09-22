@@ -68,6 +68,13 @@ describe('McpClient.loadServers', () => {
     ).rejects.toThrow('MCP task request timeout')
   })
 
+  it('lets requestTimeout take precedence over the deprecated ttl alias', async () => {
+    const clients = await McpClient.loadServers({
+      server: { url: 'https://example.com/mcp', tasksConfig: { ttl: 0, requestTimeout: 100 } },
+    })
+    expect(clients).toHaveLength(1)
+  })
+
   describe('transport detection', () => {
     it('creates StdioClientTransport when command is present', async () => {
       const clients = await McpClient.loadServers({
@@ -332,26 +339,6 @@ describe('McpClient.loadServers', () => {
       })
 
       expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['configured_search_docs'])
-    })
-
-    it('applies per-server requestTimeouts to tool calls', async () => {
-      const [client] = await McpClient.loadServers({
-        server: {
-          command: 'node',
-          requestTimeouts: { timeout: 1234, resetTimeoutOnProgress: true },
-        },
-      })
-      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
-      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'search_docs', inputSchema: {} }] })
-      sdkClient.callTool.mockResolvedValue({ content: [] })
-
-      const [tool] = await client!.listTools()
-      await client!.callTool(tool!, {})
-
-      expect(sdkClient.callTool).toHaveBeenCalledWith(
-        { name: 'search_docs', arguments: {} },
-        { timeout: 1234, resetTimeoutOnProgress: true, onprogress: expect.any(Function) }
-      )
     })
 
     it('interpolates environment variables in prefix and filter patterns', async () => {

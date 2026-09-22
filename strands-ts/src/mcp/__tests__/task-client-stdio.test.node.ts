@@ -48,8 +48,8 @@ describe('McpClient SEP-2663 tasks', () => {
       const client = new McpClient({
         transport,
         tasksConfig: {
-          ttl: 1_000,
-          timeoutMs: 2_000,
+          requestTimeout: 1_000,
+          pollTimeout: 2_000,
           useNotifications: false,
         },
       })

@@ -161,8 +161,8 @@ describe('MCP SEP-2663 Integration Tests', () => {
         applicationName: 'test-task-elicitation-client',
         url: serverInfo.url,
         tasksConfig: {
-          pollIntervalMs: 10,
-          timeoutMs: 5_000,
+          pollInterval: 10,
+          pollTimeout: 5_000,
         },
         elicitationCallback,
       })
@@ -234,7 +234,7 @@ describe('MCP SEP-2663 Integration Tests', () => {
           },
         },
         {
-          tasksConfig: { timeoutMs: 5_000, ttl: 1_000, useNotifications: false },
+          tasksConfig: { pollTimeout: 5_000, requestTimeout: 1_000, useNotifications: false },
           elicitationCallback,
         },
         { prefixWithServerName: true }

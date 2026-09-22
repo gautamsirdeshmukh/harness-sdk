@@ -74,7 +74,7 @@ describe('McpClient legacy task server', () => {
     const client = new McpClient({
       transport: clientTransport,
       prefix: 'legacy',
-      tasksConfig: { ttl: 1_000, timeoutMs: 3_000 },
+      tasksConfig: { requestTimeout: 1_000, pollTimeout: 3_000 },
       elicitationCallback: async (context) => {
         expect(context.mcpReq.signal.aborted).toBe(false)
         elicitationCount++

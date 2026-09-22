@@ -386,23 +386,6 @@ describe('MCP Integration', () => {
       expect(prefixedSdkClient.callTool).toHaveBeenCalledWith({ name: 'keep_two', arguments: { value: 1 } }, {})
     })
 
-    it('uses the server-side name for a prefixed tool called with requestTimeouts', async () => {
-      const timeoutsClient = new McpClient({
-        applicationName: 'TestApp',
-        transport: mockTransport,
-        prefix: 'server',
-        requestTimeouts: { timeout: 30000 },
-      })
-      const timeoutsSdkClient = vi.mocked(Client).mock.results.at(-1)!.value
-      timeoutsSdkClient.listTools.mockResolvedValue({ tools: [{ name: 'long_task', inputSchema: {} }] })
-      timeoutsSdkClient.callTool.mockResolvedValue({ content: [] })
-
-      const [tool] = await timeoutsClient.listTools()
-      await timeoutsClient.callTool(tool!, {})
-
-      expect(timeoutsSdkClient.callTool).toHaveBeenCalledWith({ name: 'long_task', arguments: {} }, { timeout: 30000 })
-    })
-
     it('surfaces tool annotations in the tool spec', async () => {
       const annotations = { title: 'Get Weather', readOnlyHint: true }
       sdkClientMock.listTools.mockResolvedValue({
@@ -459,7 +442,7 @@ describe('MCP Integration', () => {
       expect(tools[0]!.description).toBe('Tool which performs my_tool')
     })
 
-    it('calls the tool without timeout overrides when requestTimeouts is undefined (default)', async () => {
+    it('calls the tool with no request options by default', async () => {
       const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client })
       sdkClientMock.callTool.mockResolvedValue({ content: [] })
 
@@ -479,47 +462,6 @@ describe('MCP Integration', () => {
       expect(sdkClientMock.callTool).toHaveBeenCalledWith(
         { name: 'calc', arguments: { op: 'add' } },
         { signal: controller.signal }
-      )
-    })
-
-    it('applies requestTimeouts to every tool call and merges per-call options', async () => {
-      const resultsLengthBefore = vi.mocked(Client).mock.results.length
-      const timeoutsClient = new McpClient({
-        applicationName: 'TestApp',
-        transport: mockTransport,
-        requestTimeouts: { timeout: 30000, maxTotalTimeout: 120000 },
-      })
-      const timeoutsSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
-      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: timeoutsClient })
-      timeoutsSdkClientMock.callTool.mockResolvedValue({ content: [] })
-      const controller = new AbortController()
-
-      await timeoutsClient.callTool(tool, { op: 'add' }, { signal: controller.signal })
-
-      expect(timeoutsSdkClientMock.callTool).toHaveBeenCalledWith(
-        { name: 'calc', arguments: { op: 'add' } },
-        { timeout: 30000, maxTotalTimeout: 120000, signal: controller.signal }
-      )
-    })
-
-    it('registers a progress handler when resetTimeoutOnProgress is set', async () => {
-      const resultsLengthBefore = vi.mocked(Client).mock.results.length
-      const timeoutsClient = new McpClient({
-        applicationName: 'TestApp',
-        transport: mockTransport,
-        requestTimeouts: { timeout: 5000, resetTimeoutOnProgress: true },
-      })
-      const timeoutsSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
-      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: timeoutsClient })
-      timeoutsSdkClientMock.callTool.mockResolvedValue({ content: [] })
-
-      await timeoutsClient.callTool(tool, { op: 'add' })
-
-      // A progress token only goes on the wire when a progress handler is registered, so
-      // resetTimeoutOnProgress must be accompanied by one to take effect.
-      expect(timeoutsSdkClientMock.callTool).toHaveBeenCalledWith(
-        { name: 'calc', arguments: { op: 'add' } },
-        { timeout: 5000, resetTimeoutOnProgress: true, onprogress: expect.any(Function) }
       )
     })
 
