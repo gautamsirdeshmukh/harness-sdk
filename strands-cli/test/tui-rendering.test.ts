@@ -2,8 +2,7 @@ import { PassThrough } from 'node:stream'
 import headless from '@xterm/headless'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createInkOutputs } from '../src/tui/terminal/ink-output.js'
-import { enterAlternateScreen } from '../src/tui/terminal/terminal.js'
+import { createInkOutputs, enterAlternateScreen } from '../src/tui/terminal/terminal.js'
 
 describe('terminal output cursor', () => {
   afterEach(() => vi.unstubAllEnvs())

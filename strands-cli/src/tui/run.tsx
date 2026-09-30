@@ -7,8 +7,7 @@ import type { ChatControllerApi, ChatConversation } from './chat/controller.js'
 import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
-import { enterAlternateScreen } from './terminal/terminal.js'
-import { createInkOutputs } from './terminal/ink-output.js'
+import { createInkOutputs, enterAlternateScreen } from './terminal/terminal.js'
 
 interface RunInkChatOptions {
   firstRequest?: string
