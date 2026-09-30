@@ -34,6 +34,7 @@ describe('CliConfigStore', () => {
       onboarding: { version: 0 },
       providers: { enabled: ['bedrock'] },
       profile: DEFAULT_HARNESS_AGENT_CONFIG,
+      profileOverrides: {},
       permissions: { mode: 'default', allow: [] },
       settings: {
         transcriptSpacing: 'comfortable',
@@ -46,7 +47,7 @@ describe('CliConfigStore', () => {
         mcpDiscovery: false,
         skillDiscovery: false,
         agentMessaging: true,
-        setupOnLaunch: true,
+        setupOnLaunch: false,
         telemetry: true,
       },
     })

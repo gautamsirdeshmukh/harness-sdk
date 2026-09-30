@@ -81,6 +81,16 @@ async function mount(element: ReactElement, columns: number, rows: number) {
 }
 
 describe('responsive welcome art', () => {
+  it.each([8, 10])('keeps slash suggestions and the footer visible at %s rows', async (rows) => {
+    const view = await mount(createElement(ChatApp, { controller: controller() }), 40, rows)
+    view.input.write('/')
+    await vi.waitFor(() => {
+      view.fits()
+      expect(view.screen()).toContain('/help')
+      expect(view.screen()).toContain('/settings')
+    })
+  })
+
   it.each([
     [120, 35, 12],
     [80, 34, 6],
@@ -118,8 +128,10 @@ describe('responsive welcome art', () => {
       await vi.waitFor(() => {
         view.fits()
         expect(view.screen().replace(/\s/g, '')).toContain('keepthisdraft')
-        expect(view.screen()).toContain('/help')
-        if (rows < 30) {
+        expect(view.screen()).toContain('/settings')
+        if (rows === 10) {
+          expect(view.screen()).not.toMatch(STRANDS_WORDMARK)
+        } else if (rows < 30) {
           expect(view.screen()).toMatch(STRANDS_WORDMARK)
         } else {
           expect(view.screen()).toContain('╔')
@@ -161,6 +173,10 @@ describe('responsive welcome art', () => {
     expect(view.screen()).toMatch(STRANDS_WORDMARK)
     for (const [columns, rows] of [
       [40, 16],
+      [65, 40],
+      [66, 40],
+      [92, 37],
+      [93, 37],
       [120, 40],
       [40, 24],
     ] as const) {
@@ -169,6 +185,19 @@ describe('responsive welcome art', () => {
         view.fits()
         for (const choice of ['Quickstart', 'Customize', 'Import']) {
           expect(view.screen()).toContain(choice)
+        }
+        if (rows >= 37) {
+          const lines = view.screen().split('\n')
+          const titleRows = ['Quickstart', 'Customize', 'Import', 'Resume'].map((title) =>
+            lines.findIndex((line) =>
+              line
+                .trim()
+                .split(/\s{2,}/)
+                .includes(title)
+            )
+          )
+          expect(titleRows.every((row) => row >= 0)).toBe(true)
+          expect(new Set(titleRows).size).toBe(columns >= 66 ? 2 : 4)
         }
         expect(view.screen()).toContain('Shift+Tab')
         expect(view.screen()).toMatch(/[Cc]lick/)

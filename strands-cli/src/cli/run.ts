@@ -1,6 +1,6 @@
 import { stdin, stdout } from 'node:process'
 import { CommanderError } from 'commander'
-import { createHarness, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
+import { createHarness } from '@strands-agents/harness'
 
 import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
@@ -179,7 +179,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
 
 async function runInteractive(args: ParsedArgs, request: string | undefined): Promise<void> {
   try {
-    await import('#ink-text-cache')
+    await import('../tui/terminal/ink.js')
     // React's development timing buffer retains rendered props in Node. Load the production UI
     // without changing the environment inherited by tools and user commands.
     const nodeEnvironment = process.env.NODE_ENV
@@ -193,7 +193,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         process.env.NODE_ENV = nodeEnvironment
       }
     }
-    const [{ runInkChat }, { CliConfigStore }] = await Promise.all([
+    const [{ runInkChat }, { CliConfigStore, agentOptionsFromOverrides }] = await Promise.all([
       import('../tui/run.js'),
       import('../tui/config.js'),
     ])
@@ -231,8 +231,8 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           launch?.configuration && !launch.agentProject
             ? {
                 profile: launch.configuration.profile,
-                options: await harnessAgentOptionsFromConfig(
-                  launch.configuration.profile,
+                options: await agentOptionsFromOverrides(
+                  config.profileOverrides(launch.configuration.profile),
                   launch.configuration.profileBaseDir ?? initialWorkspace
                 ),
               }
@@ -264,7 +264,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       {
         ...(request ? { firstRequest: request } : {}),
         intro: config.snapshot().settings.animations,
-        setup: args.setup || (!args.agent && (config.needsSetup() || config.snapshot().settings.setupOnLaunch)),
+        setup: args.setup,
         config,
       }
     )

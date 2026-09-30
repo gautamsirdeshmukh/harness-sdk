@@ -165,9 +165,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
           ? [
               new ContextInjector({
                 name: 'strands:configuration-awareness',
-                renderContent: async ({ agent }): Promise<string> =>
-                  `Your current configured name is ${JSON.stringify((agent as Agent).name)}. When stating your own name, use this ` +
-                  `name instead of names in earlier conversation or memory.\n\n${CONFIGURATION_INSTRUCTIONS}`,
+                renderContent: async (): Promise<string> => CONFIGURATION_INSTRUCTIONS,
               }),
             ]
           : []),

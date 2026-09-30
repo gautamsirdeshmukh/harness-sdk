@@ -1,13 +1,10 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { main } from '../src/cli/run.js'
-import { ChatController } from '../src/tui/chat/controller.js'
 import { SETUP_VERSION, CliConfigStore } from '../src/tui/config.js'
 
 const runInkChat = vi.hoisted(() => vi.fn(async () => 0))
+vi.mock('../src/tui/terminal/ink.js', () => ({}))
 vi.mock('../src/tui/run.js', () => ({ runInkChat }))
 
 afterEach(() => {
@@ -17,24 +14,24 @@ afterEach(() => {
 })
 
 it.each([
-  { name: 'configured default', settings: {}, onboardingVersion: SETUP_VERSION, args: [], expected: true },
+  { name: 'configured default', settings: {}, onboardingVersion: SETUP_VERSION, args: [], expected: false },
   {
-    name: 'configured opt-out',
-    settings: { setupOnLaunch: false },
+    name: 'saved setup preference',
+    settings: { setupOnLaunch: true },
     onboardingVersion: SETUP_VERSION,
     args: [],
     expected: false,
   },
   {
-    name: 'first launch with opt-out',
-    settings: { setupOnLaunch: false },
+    name: 'first launch',
+    settings: {},
     onboardingVersion: 0,
     args: [],
-    expected: true,
+    expected: false,
   },
   {
-    name: 'explicit setup with opt-out',
-    settings: { setupOnLaunch: false },
+    name: 'explicit setup',
+    settings: {},
     onboardingVersion: SETUP_VERSION,
     args: ['--setup'],
     expected: true,
@@ -66,40 +63,5 @@ it.each([
   } finally {
     process.stdin.isTTY = stdinIsTTY
     process.stdout.isTTY = stdoutIsTTY
-  }
-})
-
-it('defaults existing configurations to on and persists the settings toggle', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'strands-setup-on-launch-'))
-  try {
-    const path = join(root, 'config.json')
-    await writeFile(path, JSON.stringify({ onboarding: { version: SETUP_VERSION }, settings: { animations: false } }))
-    let config = await CliConfigStore.load(path)
-    const controller = new ChatController(
-      {
-        id: 'setup-settings-test',
-        name: 'strands',
-        protocol: 'strands',
-        async *stream() {
-          yield* []
-          return { stopReason: 'endTurn' as const }
-        },
-        cancel() {},
-      },
-      { settings: config.snapshot().settings, setSettings: (settings) => config.setSettings(settings) }
-    )
-    try {
-      await controller.submit('/settings')
-      await controller.activatePanelRow({ label: 'General', description: '', value: 'settings:General' })
-      const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.value === 'setupOnLaunch')!
-      expect(row).toMatchObject({ label: 'Launch into Setup by default', control: { kind: 'toggle', checked: true } })
-      expect(await controller.activatePanelRow(row)).toBe(true)
-      config = await CliConfigStore.load(path)
-      expect(config.snapshot().settings).toMatchObject({ setupOnLaunch: false, animations: false })
-    } finally {
-      await controller.dispose()
-    }
-  } finally {
-    await rm(root, { recursive: true, force: true })
   }
 })

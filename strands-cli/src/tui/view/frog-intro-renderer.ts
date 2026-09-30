@@ -91,10 +91,10 @@ export function renderFrogSpiralFrame(
   theme: FrogTheme = 'green',
   options: FrogRenderOptions = {},
   artHeight = frogStartupHeight(Math.max(1, width), Math.max(1, height) - 6),
-  lockupLeft = 0
+  lockupLeft = 0,
+  lockupTop = artHeight > 2 ? 2 : 1
 ): string {
   const canvas = new Canvas(Math.max(1, width), Math.max(1, height), theme, false, 0, options)
-  const top = artHeight > 2 ? 2 : 1
   const value = clamp(progress)
   if (artHeight < 12 || value >= 1) {
     const indent = ' '.repeat(lockupLeft)
@@ -103,10 +103,14 @@ export function renderFrogSpiralFrame(
       .map((row) => indent + row)
     return canvas
       .rows(color)
-      .map((row, index) => artwork[index - top] ?? row)
+      .map((row, index) => artwork[index - lockupTop] ?? row)
       .join('\n')
   }
-  const scene = createScene(canvas.width, canvas.height, Math.max(12, Math.floor((canvas.height - 15) / 2)) + 3)
+  const scene = createScene(
+    canvas.width,
+    canvas.height,
+    Math.min(Math.max(12, Math.floor((canvas.height - 15) / 2)) + 3, canvas.height - BRAND_WORD_HEIGHT - 3)
+  )
   if (value < 0.23) {
     drawSpiralAct(canvas, scene, value / 0.23, elapsedMs)
     return canvas.rows(color).join('\n')
@@ -114,7 +118,7 @@ export function renderFrogSpiralFrame(
   const local = (value - 0.23) / 0.77
   drawDanglingLetterAct(canvas, scene, local, elapsedMs, lockupLeft)
   const wide = canvas.width >= BRAND_WORD.width + 26
-  const shift = Math.round((scene.wordY - (wide ? 7 : 9)) * smoothStep((local - 0.51) / 0.17))
+  const shift = Math.round((scene.wordY - (lockupTop + (wide ? 5 : 7))) * smoothStep((local - 0.51) / 0.17))
   const rows = canvas.rows(color)
   return rows.map((_, index) => rows[index + shift] ?? ' '.repeat(canvas.width)).join('\n')
 }
@@ -187,6 +191,25 @@ export function frogStartupWidth(width: number, height: number): number {
     return SMALL_BRAND_WORD.width
   }
   return Math.min(canvasWidth, 'STRANDS'.length)
+}
+
+export function frogStartupWordmarkBounds(width: number, height: number): FrogStartupHitbox {
+  if (width >= BRAND_WORD.width && height >= wordOnlyHeight(width)) {
+    const layout = lockupLayout(width)
+    return {
+      left: width >= FROG_FULL_LOCKUP_MIN_WIDTH && height >= layout.height ? layout.wordX : 0,
+      top: layout.wordY,
+      width: BRAND_WORD.width,
+      height: BRAND_WORD_HEIGHT,
+    }
+  }
+  const compact = width >= SMALL_BRAND_WORD.width && height >= 2
+  return {
+    left: 0,
+    top: 0,
+    width: compact ? SMALL_BRAND_WORD.width : Math.min(width, 'STRANDS'.length),
+    height: compact ? 2 : 1,
+  }
 }
 
 export function frogStartupHitbox(width: number, height = lockupLayout(width).height): FrogStartupHitbox {
@@ -374,10 +397,10 @@ function drawFirefly(canvas: Canvas, point: Point, elapsedMs: number, glow = 1):
 }
 
 function createScene(width: number, height: number, wordY: number): Scene {
-  const count = Math.max(86, Math.min(210, Math.round(width * 1.6)))
-  const random = seededRandom(width * 7_919 + height * 104_729)
+  // Particle identities stay fixed while the canvas changes around them.
+  const random = seededRandom(7_919)
   const particles: Particle[] = []
-  for (let index = 0; index < count; index++) {
+  for (let index = 0; index < 210; index++) {
     particles.push({
       angle: random() * Math.PI * 2,
       radius: 0.25 + random() * 0.75,

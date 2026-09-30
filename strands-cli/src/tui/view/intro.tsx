@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { Box, useWindowSize } from 'ink'
+import { useLayoutEffect, useRef, useState, type ReactElement } from 'react'
+import { Box } from 'ink'
 
 import type { FrogTheme } from '../chat/types.js'
+import { useTerminalSize } from '../terminal/size.js'
 import {
   FROG_FULL_LOCKUP_MIN_WIDTH,
   FROG_INTRO_DURATION_MS,
@@ -42,7 +43,7 @@ export function DnaVortexIntro({
   customBase?: Exclude<FrogTheme, 'custom'>
 }): ReactElement {
   const colors = useTheme()
-  const { columns, rows } = useWindowSize()
+  const { columns, rows } = useTerminalSize()
   const [elapsedMs, setElapsedMs] = useState(0)
   const completed = useRef(false)
   const startedAt = useRef(Date.now())
@@ -51,7 +52,7 @@ export function DnaVortexIntro({
   const hasRoom = hasRoomForFrogIntro(terminalWidth, terminalHeight, setup)
   const fps = terminalWidth * terminalHeight > 8_000 ? 12 : terminalWidth * terminalHeight > 4_500 ? 16 : 20
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!hasRoom) {
       if (!completed.current) {
         completed.current = true
@@ -95,7 +96,7 @@ export function DnaVortexIntro({
       height={terminalHeight}
       overflow="hidden"
       position="relative"
-      backgroundColor={colors.background}
+      backgroundColor={colors.canvas}
     >
       <Text>
         {artwork

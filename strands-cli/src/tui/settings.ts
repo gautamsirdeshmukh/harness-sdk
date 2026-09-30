@@ -104,7 +104,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   mcpDiscovery: false,
   skillDiscovery: false,
   agentMessaging: true,
-  setupOnLaunch: true,
+  setupOnLaunch: false,
   telemetry: true,
 }
 
@@ -213,16 +213,6 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     key: 'agentMessaging',
     label: 'Agents (peer-to-peer messaging)',
     section: 'Auto-Discovery',
-    control: 'toggle',
-    options: [
-      { label: 'On', value: true },
-      { label: 'Off', value: false },
-    ],
-  },
-  {
-    key: 'setupOnLaunch',
-    label: 'Launch into Setup by default',
-    section: 'General',
     control: 'toggle',
     options: [
       { label: 'On', value: true },
