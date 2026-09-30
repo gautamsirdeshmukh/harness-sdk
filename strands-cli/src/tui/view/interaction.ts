@@ -19,7 +19,7 @@ export function settingsLayout(
   optionWidth: number
 } {
   const contentWidth = Math.max(1, Math.min(68, panelWidth - 4))
-  const longLabel = setting === 'agentMessaging' || setting === 'setupOnLaunch' || setting === 'telemetry'
+  const longLabel = setting === 'agentMessaging' || setting === 'telemetry'
   const labelWidth =
     setting === 'frogTheme'
       ? Math.floor(contentWidth / 3)

@@ -307,8 +307,6 @@ function ChatViewContent({
                 panel={snapshot.panel}
                 slider={effortSlider}
                 width={Math.max(1, editorWidth - 2 - (party ? 2 : 0))}
-                pressed={pressedPanelSlider}
-                {...(hoveredPanelSlider !== undefined ? { hovered: hoveredPanelSlider } : {})}
                 {...(onPanelElement ? { onElement: onPanelElement } : {})}
                 {...(onPanelSliderElement ? { onSliderElement: onPanelSliderElement } : {})}
               />

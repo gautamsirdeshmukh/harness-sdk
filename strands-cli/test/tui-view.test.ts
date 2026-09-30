@@ -1008,7 +1008,7 @@ describe('ChatView', () => {
     'keeps settings controls and their hints visible at %sx24 for first and last selections',
     (width) => {
       const config = { ...DEFAULT_CHAT_SETTINGS, colorMode: 'light' as const }
-      const rows = settingsRows(config, false, 'Appearance')
+      const rows = settingsRows(config, 'Appearance')
       const capacity = panelRowCapacity('settings', 24, width, rows)
       for (const selected of [0, rows.length - 1]) {
         const output = sanitizeTerminalText(

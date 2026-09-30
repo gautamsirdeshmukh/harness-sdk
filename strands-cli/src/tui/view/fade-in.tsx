@@ -38,32 +38,29 @@ export function FadeIn({
   animate,
   background,
   children,
-  visible = true,
 }: {
   animate: boolean
   background: string
   children: ReactNode
-  visible?: boolean
 }): ReactElement {
   const { stdout } = useStdout()
   const enabled = animate && stdout.isTTY
   const [progress, setProgress] = useState(0)
   const progressRef = useRef(0)
   useEffect(() => {
-    const target = visible ? 1 : 0
     if (!enabled) {
-      progressRef.current = target
-      setProgress(target)
+      progressRef.current = 1
+      setProgress(1)
       return
     }
     const from = progressRef.current
-    if (from === target) {
+    if (from === 1) {
       return
     }
     const startedAt = Date.now()
     const timer = setInterval(() => {
       const elapsed = Math.min(1, (Date.now() - startedAt) / FADE_DURATION_MS)
-      const next = from + (target - from) * (1 - (1 - elapsed) ** 3)
+      const next = from + (1 - from) * (1 - (1 - elapsed) ** 3)
       progressRef.current = next
       setProgress(next)
       if (elapsed === 1) {
@@ -71,11 +68,11 @@ export function FadeIn({
       }
     }, 32)
     return (): void => clearInterval(timer)
-  }, [enabled, visible])
+  }, [enabled])
 
   return (
-    <Fade background={background} progress={enabled ? progress : visible ? 1 : 0}>
-      {visible || (enabled && progress > 0) ? children : null}
+    <Fade background={background} progress={enabled ? progress : 1}>
+      {children}
     </Fade>
   )
 }

@@ -46,7 +46,6 @@ describe('CliConfigStore', () => {
         mcpDiscovery: false,
         skillDiscovery: false,
         agentMessaging: true,
-        setupOnLaunch: false,
         telemetry: true,
       },
     })

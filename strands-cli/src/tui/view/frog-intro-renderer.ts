@@ -193,25 +193,6 @@ export function frogStartupWidth(width: number, height: number): number {
   return Math.min(canvasWidth, 'STRANDS'.length)
 }
 
-export function frogStartupWordmarkBounds(width: number, height: number): FrogStartupHitbox {
-  if (width >= BRAND_WORD.width && height >= wordOnlyHeight(width)) {
-    const layout = lockupLayout(width)
-    return {
-      left: width >= FROG_FULL_LOCKUP_MIN_WIDTH && height >= layout.height ? layout.wordX : 0,
-      top: layout.wordY,
-      width: BRAND_WORD.width,
-      height: BRAND_WORD_HEIGHT,
-    }
-  }
-  const compact = width >= SMALL_BRAND_WORD.width && height >= 2
-  return {
-    left: 0,
-    top: 0,
-    width: compact ? SMALL_BRAND_WORD.width : Math.min(width, 'STRANDS'.length),
-    height: compact ? 2 : 1,
-  }
-}
-
 export function frogStartupHitbox(width: number, height = lockupLayout(width).height): FrogStartupHitbox {
   const canvasWidth = Math.max(1, width)
   if (

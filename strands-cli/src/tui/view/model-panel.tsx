@@ -276,18 +276,18 @@ export function EffortSlider({
   slider,
   width,
   compact,
-  pressed,
+  pressed = false,
   hovered,
-  focused,
+  focused = false,
   onElement,
   showStops = false,
 }: {
   slider: ChatPanelSlider
   width: number
   compact: boolean
-  pressed: boolean
+  pressed?: boolean
   hovered?: boolean
-  focused: boolean
+  focused?: boolean
   onElement?: (element: DOMElement | null) => void
   showStops?: boolean
 }): ReactElement {

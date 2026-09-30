@@ -7,7 +7,6 @@ import { ChatController, type ChatBackend } from '../src/tui/chat/controller.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 import { ChatApp } from '../src/tui/view/app.js'
-import { DnaVortexIntro } from '../src/tui/view/intro.js'
 import { frogStartupHeight, renderFrogStartupLockup } from '../src/tui/view/frog-intro-renderer.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
 import { ttyInput, ttyOutput } from './fixtures/terminal.js'
@@ -138,30 +137,6 @@ describe('responsive welcome art', () => {
         }
       })
     }
-  })
-
-  it('skips the intro when the full frog does not fit', async () => {
-    const complete = vi.fn()
-    const view = await mount(createElement(DnaVortexIntro, { ready: false, onComplete: complete }), 40, 16)
-
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(0))
-    expect(view.screen()).toBe('')
-  })
-
-  it('renders the intro while the full frog fits and skips it after a compact resize', async () => {
-    const complete = vi.fn()
-    const view = await mount(createElement(DnaVortexIntro, { ready: false, onComplete: complete }), 120, 40)
-    const hint = '[ space to skip ]'
-    const rows = view.screen().split('\n')
-    const hintRow = rows.findIndex((row) => row.includes(hint))
-    const hintColumn = rows[hintRow]!.indexOf(hint)
-
-    expect(hintRow).toBe(rows.length - 1)
-    expect(Math.abs(hintColumn + hint.length / 2 - 60)).toBeLessThanOrEqual(1)
-    expect(complete).not.toHaveBeenCalled()
-
-    await view.resize(40, 16)
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(0))
   })
 
   it('keeps setup choices visible in a narrow window and after resizing', async () => {

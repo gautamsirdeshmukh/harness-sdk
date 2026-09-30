@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { main } from '../src/cli/run.js'
 import { SETUP_VERSION, CliConfigStore } from '../src/tui/config.js'
+import { parseSettings } from '../src/tui/settings.js'
 
 const runInkChat = vi.hoisted(() => vi.fn(async () => 0))
 vi.mock('../src/tui/terminal/ink.js', () => ({}))
@@ -51,7 +52,9 @@ it.each([
     expected: true,
   },
 ])('selects startup setup for $name', async ({ settings, onboardingVersion, args, expected }) => {
-  vi.spyOn(CliConfigStore, 'load').mockResolvedValue(CliConfigStore.memory({}, settings, { onboardingVersion }))
+  vi.spyOn(CliConfigStore, 'load').mockResolvedValue(
+    CliConfigStore.memory({}, parseSettings(settings, 'test/config.json'), { onboardingVersion })
+  )
   const stdinIsTTY = process.stdin.isTTY
   const stdoutIsTTY = process.stdout.isTTY
   process.stdin.isTTY = true

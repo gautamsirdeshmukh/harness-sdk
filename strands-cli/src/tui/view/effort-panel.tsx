@@ -11,16 +11,12 @@ export function EffortPanel({
   panel,
   slider,
   width,
-  pressed,
-  hovered,
   onElement,
   onSliderElement,
 }: {
   panel: ChatPanel
   slider: ChatPanelSlider
   width: number
-  pressed: boolean
-  hovered?: boolean
   onElement?: (element: DOMElement | null) => void
   onSliderElement?: (element: DOMElement | null) => void
 }): ReactElement {
@@ -54,9 +50,6 @@ export function EffortPanel({
         width={sliderWidth}
         compact={false}
         showStops
-        pressed={pressed}
-        {...(hovered !== undefined ? { hovered } : {})}
-        focused
         {...(onSliderElement ? { onElement: onSliderElement } : {})}
       />
       <Box marginTop={1} width={contentWidth}>
