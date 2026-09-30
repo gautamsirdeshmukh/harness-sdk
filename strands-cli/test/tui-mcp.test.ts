@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
+import { defineHarnessAgentConfig } from '@strands-agents/harness'
+import { harnessAgentOptionsFromConfig } from '@strands-agents/harness/internal'
 import { McpClient } from '@strands-agents/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 

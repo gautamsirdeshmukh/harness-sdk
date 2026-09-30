@@ -2,10 +2,10 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
-  harnessAgentOptionsFromConfig,
   type HarnessAgentConfig,
   type HarnessAgentOptions,
 } from '@strands-agents/harness'
+import { harnessAgentOptionsFromConfig } from '@strands-agents/harness/internal'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { agentConfig, configOverrideFields, projectConfigOverrides, type ParsedArgs } from './arguments.js'

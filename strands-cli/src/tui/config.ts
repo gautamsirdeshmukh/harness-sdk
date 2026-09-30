@@ -7,13 +7,12 @@ import { isDeepStrictEqual } from 'node:util'
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
   defineHarnessAgentConfig,
-  harnessAgentOptionsFromConfig,
   type Effort,
   type HarnessAgentConfig,
   type HarnessAgentOptions,
   type HarnessConfigContextManager,
 } from '@strands-agents/harness'
-import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
+import { harnessAgentOptionsFromConfig, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 
 import { DEFAULT_CHAT_SETTINGS, parseSettings, type ChatSettings } from './settings.js'
 import { errorMessage } from './terminal/sanitize.js'

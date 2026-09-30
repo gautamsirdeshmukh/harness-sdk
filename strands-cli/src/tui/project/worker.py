@@ -28,7 +28,8 @@ from strands.storage import LocalFileStorage
 from strands.tools.mcp import MCPClient
 from strands.types.tools import ToolContext
 from strands.vended_plugins.skills import AgentSkills
-from strands_harness import define_harness_agent_config, harness_agent_kwargs_from_config
+from strands_harness import define_harness_agent_config
+from strands_harness.config import _harness_agent_kwargs_from_config
 from strands_harness.defaults import DEFAULT_MODEL
 
 channel = os.fdopen(3, "w", buffering=1)
@@ -106,7 +107,7 @@ def overrides_from_config(partial):
     if not partial:
         return {}
     config = define_harness_agent_config(partial)
-    options = harness_agent_kwargs_from_config(config)
+    options = _harness_agent_kwargs_from_config(config)
     # These values are normally omitted by the config loader when equal to defaults.
     for key in ("builtinTools", "builtinPlugins", "caching", "description", "instructions", "sessionId"):
         if key in partial:

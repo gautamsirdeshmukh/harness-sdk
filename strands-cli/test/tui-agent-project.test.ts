@@ -11,7 +11,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, unzipSync, zipSync } from 'fflate'
 
 import * as harness from '@strands-agents/harness'
-import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
+import { defineHarnessAgentConfig } from '@strands-agents/harness'
+import { harnessAgentOptionsFromConfig } from '@strands-agents/harness/internal'
 
 import { writeAgentProject } from '../src/tui/project/export.js'
 import { importAgentProject } from '../src/tui/project/import.js'
@@ -138,11 +139,15 @@ describe('agent projects', () => {
       URL,
       process,
       require: (name: string) => {
+        if (name === '@strands-agents/harness/internal') {
+          return {
+            harnessAgentOptionsFromConfig: (config: harness.HarnessAgentConfig) =>
+              harnessAgentOptionsFromConfig(config, root),
+          }
+        }
         if (name === '@strands-agents/harness') {
           return {
             ...harness,
-            harnessAgentOptionsFromConfig: (config: harness.HarnessAgentConfig) =>
-              harnessAgentOptionsFromConfig(config, root),
             createHarness: (options: Record<string, unknown>) => {
               const effective: Record<string, unknown> = {
                 effort: 'auto',

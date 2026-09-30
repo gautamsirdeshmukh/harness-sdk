@@ -348,7 +348,10 @@ export function normalizeHarnessAgentConfig(value: unknown): HarnessAgentConfig 
   return config
 }
 
-/** Load configured overrides, leaving omitted options to the harness factory. */
+/**
+ * Load configured overrides, leaving omitted options to the harness factory.
+ * @internal
+ */
 export async function harnessAgentOptionsFromConfig(
   input: Partial<HarnessAgentConfig>,
   baseDir = process.cwd()

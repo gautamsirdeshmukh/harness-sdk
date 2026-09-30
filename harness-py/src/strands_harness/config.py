@@ -39,7 +39,6 @@ from strands_harness.types.agent import BuiltinPluginName, BuiltinToolName, Effo
 __all__ = [
     "DEFAULT_HARNESS_AGENT_CONFIG",
     "define_harness_agent_config",
-    "harness_agent_kwargs_from_config",
     "normalize_harness_agent_config",
 ]
 
@@ -123,7 +122,7 @@ def _describe(error: ValidationError, config: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def harness_agent_kwargs_from_config(value: object, base_dir: str | Path = ".") -> dict[str, Any]:
+def _harness_agent_kwargs_from_config(value: object, base_dir: str | Path = ".") -> dict[str, Any]:
     """Load executable references and convert portable config to ``create_harness`` kwargs.
 
     Omitted options are left to the harness factory.

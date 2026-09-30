@@ -52,7 +52,7 @@ export const load: LoadHook = async (url, context, nextLoad) => {
     file.statements.flatMap((node) =>
       ts.isImportDeclaration(node) &&
       ts.isStringLiteral(node.moduleSpecifier) &&
-      node.moduleSpecifier.text === '@strands-agents/harness' &&
+      node.moduleSpecifier.text === '@strands-agents/harness/internal' &&
       node.importClause?.namedBindings &&
       ts.isNamedImports(node.importClause.namedBindings)
         ? node.importClause.namedBindings.elements

@@ -79,11 +79,6 @@ create_harness(
 
 The sections below walk through each of these in turn.
 
-For a JSON-compatible definition, use `define_harness_agent_config()` and pass the result through
-`harness_agent_kwargs_from_config()`. Executable values such as custom tools, models, intervention
-handlers, sandboxes, and other live `Agent` fields are represented by module references; malformed
-or wrong-language references fail instead of being ignored.
-
 > **Want a terminal command instead of code?** The [`strands` CLI](https://github.com/strands-agents/harness-sdk/tree/main/strands-cli)
 > wraps this same agent. Install it with `npm install -g @strands-agents/cli` for a `strands` command.
 
