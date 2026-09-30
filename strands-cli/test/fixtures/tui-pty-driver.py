@@ -91,15 +91,43 @@ def main() -> int:
     try:
         wait_for([ready_marker, CHAT_READY])
         wait_for_raw_mode()
+        def set_size(columns: int, height: int) -> None:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, columns, 0, 0))
+            os.kill(process.pid, signal.SIGWINCH)
+
+        def settle(timeout: float = 0.15) -> None:
+            deadline = time.monotonic() + timeout
+            last = len(transcript)
+            while time.monotonic() < deadline:
+                pump()
+                if len(transcript) != last:
+                    last = len(transcript)
+                    deadline = time.monotonic() + timeout
+                else:
+                    select.select([master], [], [], 0.05)
+
         resize_output = b""
+        burst_output = b""
+        noop_output = b""
         if resize:
             start = len(transcript)
             for columns, height in [(80, 24), (40, 16), (22, 10), (160, 50), (160, 25), (100, 30)]:
                 offset = len(transcript)
-                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, columns, 0, 0))
-                os.kill(process.pid, signal.SIGWINCH)
+                set_size(columns, height)
                 wait_for([b"\x1b[1;1H"], timeout=2.0, start=offset)
             resize_output = bytes(transcript[start:])
+
+            burst_start = len(transcript)
+            for columns, height in [(70, 25), (50, 18), (120, 40)]:
+                set_size(columns, height)
+            wait_for([b"\x1b[1;1H"], timeout=2.0, start=burst_start)
+            settle()
+            burst_output = bytes(transcript[burst_start:])
+
+            noop_start = len(transcript)
+            set_size(120, 40)
+            settle(0.2)
+            noop_output = bytes(transcript[noop_start:])
         if frog_mode:
             os.write(master, b"/frog peek")
             wait_for([b"/frog peek"], timeout=2.0, styled=False)
@@ -142,6 +170,8 @@ def main() -> int:
                     "termiosRestored": initial_terminal == final_terminal,
                     "transcript": base64.b64encode(transcript).decode(),
                     "resizeTranscript": base64.b64encode(resize_output).decode(),
+                    "resizeBurstTranscript": base64.b64encode(burst_output).decode(),
+                    "resizeNoopTranscript": base64.b64encode(noop_output).decode(),
                 }
             )
         )

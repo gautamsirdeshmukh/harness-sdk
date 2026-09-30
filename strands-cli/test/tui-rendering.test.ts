@@ -1,14 +1,9 @@
-import { execFile } from 'node:child_process'
 import { PassThrough } from 'node:stream'
-import { promisify } from 'node:util'
-import { fileURLToPath, URL } from 'node:url'
 import headless from '@xterm/headless'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createInkOutputs } from '../src/tui/terminal/ink-output.js'
 import { enterAlternateScreen } from '../src/tui/terminal/terminal.js'
-
-const execute = promisify(execFile)
 
 describe('terminal output cursor', () => {
   afterEach(() => vi.unstubAllEnvs())
@@ -63,27 +58,5 @@ describe('terminal output cursor', () => {
     expect(streams.stdout).toBe(output)
     expect(streams.stderr).toBe(output)
     output.destroy()
-  })
-})
-
-describe('terminal resize rendering', () => {
-  it.each(['ghostty', 'Apple_Terminal'])('preserves the screen without blanking in %s', async (terminal) => {
-    const { stdout, stderr } = await execute(
-      process.execPath,
-      [
-        '--no-warnings=ExperimentalWarning',
-        '--experimental-loader',
-        fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url)),
-        fileURLToPath(new URL('./fixtures/tui-resize-probe.mjs', import.meta.url)),
-      ],
-      {
-        cwd: fileURLToPath(new URL('..', import.meta.url)),
-        env: { ...process.env, TERM_PROGRAM: terminal },
-        timeout: 20_000,
-        maxBuffer: 2 * 1024 * 1024,
-      }
-    )
-    expect(stdout).toContain('resize frames, draft, transcript, burst coalescing, and cleanup verified')
-    expect(stderr.replaceAll('\u001b[?25h', '')).toBe('')
   })
 })

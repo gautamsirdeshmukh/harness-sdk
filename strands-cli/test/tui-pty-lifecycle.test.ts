@@ -17,6 +17,8 @@ interface PtyResult {
   termiosRestored: boolean
   transcript: string
   resizeTranscript: string
+  resizeBurstTranscript: string
+  resizeNoopTranscript: string
 }
 
 async function runPtySmoke(
@@ -70,11 +72,15 @@ describe.skipIf(process.platform === 'win32')('TUI PTY lifecycle', () => {
   it('resizes the real PTY without blanking and restores the terminal after /exit', async () => {
     const result = await runPtySmoke(false, undefined, false, false, true)
     const frames = Buffer.from(result.resizeTranscript, 'base64').toString()
+    const burst = Buffer.from(result.resizeBurstTranscript, 'base64').toString()
+    const noop = Buffer.from(result.resizeNoopTranscript, 'base64').toString()
 
     expect(result.returnCode).toBe(0)
     expect(frames.split('\u001b[1;1H')).toHaveLength(7)
+    expect(burst.split('\u001b[1;1H')).toHaveLength(2)
+    expect(noop).toBe('')
     for (const code of ['2J', '3J', '2K']) {
-      expect(frames).not.toContain(`\u001b[${code}`)
+      expect(frames + burst).not.toContain(`\u001b[${code}`)
     }
     expectRestoredTerminal(result)
   })
