@@ -349,16 +349,18 @@ describe('project invocation', () => {
     }
   })
 
-  it('ignores implicit dotenv files', async () => {
+  it.each([
+    { argv: [], options: { printer: false } },
+    { argv: ['--model', 'openai/gpt-5.6-sol'], options: { model: 'openai/gpt-5.6-sol', printer: false } },
+  ])('passes only explicit overrides to createHarness: $argv', async ({ argv, options }) => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-cli-profile-'))
     try {
       await writeFile(join(directory, '.env'), 'OPENAI_API_KEY=cwd-key')
       vi.stubEnv('OPENAI_API_KEY', undefined)
 
-      const config = CliConfigStore.memory()
-      const invocation = await invocationAgentForRun(parseArgs([]), config, directory)
+      const invocation = await invocationAgentForRun(parseArgs(argv), CliConfigStore.memory(), directory)
 
-      expect(invocation.options.skills).toBeUndefined()
+      expect(invocation.options).toEqual(options)
       expect(process.env.OPENAI_API_KEY).toBeUndefined()
     } finally {
       applyProviderEnvironmentValues({})

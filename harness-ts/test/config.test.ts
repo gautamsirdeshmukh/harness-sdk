@@ -49,6 +49,10 @@ describe('HarnessAgentConfig', () => {
   })
 
   it('maps defaults through the same contract createHarness consumes', async () => {
+    await expect(harnessAgentOptionsFromConfig({ name: 'Custom agent' })).resolves.toEqual({ name: 'Custom agent' })
+    await expect(harnessAgentOptionsFromConfig({ model: 'openai/gpt-5.6-sol' })).resolves.toEqual({
+      model: 'openai/gpt-5.6-sol',
+    })
     await expect(harnessAgentOptionsFromConfig(DEFAULT_HARNESS_AGENT_CONFIG)).resolves.toMatchObject({
       name: 'Strands harness',
       model: DEFAULT_HARNESS_AGENT_CONFIG.model,
