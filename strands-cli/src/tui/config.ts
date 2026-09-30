@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto'
 import { readFile, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
   defineHarnessAgentConfig,
+  harnessAgentOptionsFromConfig,
   type Effort,
   type HarnessAgentConfig,
+  type HarnessAgentOptions,
   type HarnessConfigContextManager,
 } from '@strands-agents/harness'
 import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
@@ -65,6 +68,7 @@ export interface CliConfigSnapshot {
   onboarding: { version: number }
   providers: { enabled: readonly ProviderId[] }
   profile: HarnessAgentConfig
+  profileOverrides: Partial<HarnessAgentConfig>
   profileBaseDir?: string
   agentProject?: string
   permissions: PermissionConfig
@@ -86,6 +90,23 @@ type ConfigDocument = Record<string, unknown>
 /** Resolves a path under `~/.strands/cli`, the CLI's user-level config, state, and cache directory. */
 export function userDirectory(...segments: string[]): string {
   return join(homedir(), '.strands', 'cli', ...segments)
+}
+
+export async function agentOptionsFromOverrides(
+  profile: Partial<HarnessAgentConfig>,
+  baseDir: string
+): Promise<HarnessAgentOptions> {
+  const options = await harnessAgentOptionsFromConfig(defineHarnessAgentConfig(profile), baseDir)
+  const configured = new Set([
+    ...Object.keys(profile),
+    ...Object.keys(profile.agentConfig ?? {}),
+    ...Object.keys(profile.agentConfigModules ?? {}),
+  ])
+  if (profile.modelModule) configured.add('model')
+  if (profile.memoryStores?.length) configured.add('memory')
+  if (profile.subagents?.length) configured.add('tools')
+  if (profile.interventionModules?.length) configured.add('interventions')
+  return Object.fromEntries(Object.entries(options).filter(([key]) => configured.has(key)))
 }
 
 export class CliConfigStore {
@@ -155,7 +176,7 @@ export class CliConfigStore {
       {
         onboarding: { version: onboardingVersion },
         providers: { enabled: providers, environment: providerEnvironment },
-        profile,
+        profile: setup.profile ?? {},
         profileBaseDir: setup.profileBaseDir,
         permissions: resolvedPermissions,
         settings: resolvedSettings,
@@ -176,6 +197,7 @@ export class CliConfigStore {
       onboarding: { version: this._onboardingVersion },
       providers: { enabled: [...this._providers] },
       profile: globalThis.structuredClone(this._profile),
+      profileOverrides: this.profileOverrides(),
       ...(this._profileBaseDir ? { profileBaseDir: this._profileBaseDir } : {}),
       ...(typeof this._document.agentProject === 'string' ? { agentProject: this._document.agentProject } : {}),
       permissions: {
@@ -256,7 +278,12 @@ export class CliConfigStore {
   // which the setup wizard's `.catch` could never observe (leaving it stuck in the saving state).
   async saveSetup(
     configuration: SetupConfiguration,
-    options: { onboardingVersion?: number; agentProject?: string | undefined; persist?: boolean } = {}
+    options: {
+      onboardingVersion?: number
+      agentProject?: string | undefined
+      persist?: boolean
+      profileOverrides?: Partial<HarnessAgentConfig>
+    } = {}
   ): Promise<void> {
     const onboardingVersion = options.onboardingVersion ?? SETUP_VERSION
     const providers = uniqueProviders(configuration.providers)
@@ -284,7 +311,10 @@ export class CliConfigStore {
         agentProject: options.agentProject,
         onboarding: { ...priorOnboarding, version: onboardingVersion },
         providers: { ...priorProviders, enabled: [...providers], environment: providerEnvironment },
-        profile: { ...priorProfile, ...globalThis.structuredClone(profile) },
+        profile:
+          options.profileOverrides === undefined
+            ? { ...priorProfile, ...this.profileOverrides(profile) }
+            : globalThis.structuredClone(options.profileOverrides),
         profileBaseDir: configuration.profileBaseDir === undefined ? this._profileBaseDir : profileBaseDir,
         permissions: { ...priorPermissions, mode: configuration.permissionMode, allow: [...allowedTools] },
         settings: { ...(isRecord(this._document.settings) ? this._document.settings : {}), ...settings },
@@ -305,6 +335,17 @@ export class CliConfigStore {
 
   setPermissionMode(mode: PermissionMode): Promise<void> {
     return this._updatePermissions((permissions) => ({ ...permissions, mode }))
+  }
+
+  profileOverrides(profile = this._profile): Partial<HarnessAgentConfig> {
+    const saved = isRecord(this._document.profile) ? this._document.profile : {}
+    return globalThis.structuredClone(
+      Object.fromEntries(
+        Object.entries(profile).filter(
+          ([key, value]) => key in saved || !isDeepStrictEqual(value, this._profile[key as keyof HarnessAgentConfig])
+        )
+      )
+    )
   }
 
   allowTool(toolName: string): Promise<void> {

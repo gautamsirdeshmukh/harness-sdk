@@ -348,8 +348,9 @@ export function normalizeHarnessAgentConfig(value: unknown): HarnessAgentConfig 
   return config
 }
 
+/** Load configured overrides, leaving omitted options to the harness factory. */
 export async function harnessAgentOptionsFromConfig(
-  input: HarnessAgentConfig,
+  input: Partial<HarnessAgentConfig>,
   baseDir = process.cwd()
 ): Promise<HarnessAgentOptions> {
   const config = normalizeHarnessAgentConfig(input)
@@ -369,11 +370,11 @@ export async function harnessAgentOptionsFromConfig(
   return {
     ...config.agentConfig,
     ...agentConfigModules,
-    name: config.name,
+    ...(input.name !== undefined ? { name: config.name } : {}),
     ...(config.description ? { description: config.description } : {}),
     ...(config.instructions ? { instructions: config.instructions } : {}),
-    model: model ?? config.model,
-    effort: config.effort,
+    ...(model !== undefined ? { model } : input.model !== undefined ? { model: config.model } : {}),
+    ...(input.effort !== undefined ? { effort: config.effort } : {}),
     // Specialist agents declared as `subagents` module refs are wired the same way as any tool: each
     // is exposed via `Agent.asTool()` and appended to `tools` (the harness has no separate subagents param).
     ...(tools.length > 0 || subagents.length > 0
@@ -382,10 +383,12 @@ export async function harnessAgentOptionsFromConfig(
     ...mcpServerOptions(config.mcpServers, baseDir),
     ...(builtinTools === undefined ? {} : { builtinTools }),
     ...(config.caching ? {} : { caching: false }),
-    contextManager: config.contextManager,
-    session: sessionOption(config.session, baseDir),
-    skills: skillsOption(config.skills, baseDir),
-    memory: memoryOption(config.memory, memoryStores, baseDir),
+    ...(input.contextManager !== undefined ? { contextManager: config.contextManager } : {}),
+    ...(input.session !== undefined ? { session: sessionOption(config.session, baseDir) } : {}),
+    ...(input.skills !== undefined ? { skills: skillsOption(config.skills, baseDir) } : {}),
+    ...(input.memory !== undefined || memoryStores.length > 0
+      ? { memory: memoryOption(config.memory, memoryStores, baseDir) }
+      : {}),
     ...(plugins.length > 0 ? { plugins } : {}),
     ...(sameStrings(config.builtinPlugins, DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins)
       ? {}
