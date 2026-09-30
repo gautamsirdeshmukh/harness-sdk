@@ -2,14 +2,13 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
+  harnessAgentOptionsFromConfig,
   type HarnessAgentConfig,
   type HarnessAgentOptions,
 } from '@strands-agents/harness'
-import { harnessAgentOptionsFromConfig } from '@strands-agents/harness/internal'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
-import { agentConfig, configOverrideFields, projectConfigOverrides, type ParsedArgs } from './arguments.js'
-import { agentOptionsFromOverrides } from '../tui/config.js'
+import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
 import { restoreSessionAgentDefinition } from '../tui/session/agent-definition.js'
 import { importAgentProject, type ImportedAgentProject } from '../tui/project/import.js'
 import type { AgentFactory } from '../tui/project/typescript.js'
@@ -24,12 +23,7 @@ interface InvocationAgent {
 }
 
 interface InvocationConfigStore {
-  snapshot(): {
-    profile: HarnessAgentConfig
-    profileOverrides?: Partial<HarnessAgentConfig>
-    profileBaseDir?: string
-    agentProject?: string
-  }
+  snapshot(): { profile: HarnessAgentConfig; profileBaseDir?: string; agentProject?: string }
   applyProviderEnvironment(): void
 }
 
@@ -64,15 +58,10 @@ export async function invocationAgentForRun(
   }
   const baseDir = snapshot.profileBaseDir ?? cwd
   const profile = agentConfig(args, snapshot.profile)
-  const configuredFields = new Set([
-    ...Object.keys(snapshot.profileOverrides ?? snapshot.profile),
-    ...configOverrideFields(args),
-  ])
-  const overrides = Object.fromEntries(Object.entries(profile).filter(([key]) => configuredFields.has(key)))
   config.applyProviderEnvironment()
   requireBedrockRegion(profile.model)
   const options = {
-    ...(await agentOptionsFromOverrides(overrides, baseDir)),
+    ...(await harnessAgentOptionsFromConfig(profile, baseDir)),
     printer: false,
   }
   return {

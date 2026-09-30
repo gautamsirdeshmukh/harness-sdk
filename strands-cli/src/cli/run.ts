@@ -1,6 +1,6 @@
 import { stdin, stdout } from 'node:process'
 import { CommanderError } from 'commander'
-import { createHarness } from '@strands-agents/harness'
+import { createHarness, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
 
 import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
@@ -193,7 +193,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         process.env.NODE_ENV = nodeEnvironment
       }
     }
-    const [{ runInkChat }, { CliConfigStore, agentOptionsFromOverrides }] = await Promise.all([
+    const [{ runInkChat }, { CliConfigStore }] = await Promise.all([
       import('../tui/run.js'),
       import('../tui/config.js'),
     ])
@@ -231,8 +231,8 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           launch?.configuration && !launch.agentProject
             ? {
                 profile: launch.configuration.profile,
-                options: await agentOptionsFromOverrides(
-                  config.profileOverrides(launch.configuration.profile),
+                options: await harnessAgentOptionsFromConfig(
+                  launch.configuration.profile,
                   launch.configuration.profileBaseDir ?? initialWorkspace
                 ),
               }

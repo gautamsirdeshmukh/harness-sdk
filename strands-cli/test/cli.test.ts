@@ -276,7 +276,7 @@ describe('profile model persistence', () => {
 })
 
 describe('project invocation', () => {
-  it('loads saved-profile packages with nested overrides and explicit environment files', async () => {
+  it('loads saved-profile packages and explicitly selected environment files', async () => {
     const directory = await realpath(await mkdtemp(join(tmpdir(), 'strands-cli-profile-')))
     const root = join(directory, 'project')
     const cwd = join(directory, 'launch-directory')
@@ -290,11 +290,7 @@ describe('project invocation', () => {
       )
       await writeFile(
         join(packageDirectory, 'tool.js'),
-        [
-          "export const tool = { name: 'project-tool', description: process.env.ANTHROPIC_API_KEY }",
-          "export const model = { modelId: 'original-model' }",
-          "export const alternateModel = { modelId: 'alternate-model' }",
-        ].join('\n')
+        "export const tool = { name: 'project-tool', description: process.env.ANTHROPIC_API_KEY }\n"
       )
       await writeFile(
         join(root, '.env'),
@@ -312,7 +308,6 @@ describe('project invocation', () => {
         providers: ['bedrock'],
         profile: defineHarnessAgentConfig({
           skills: false,
-          modelModule: { kind: 'model', module: 'strands-profile-fixture', export: 'model' },
           tools: [{ kind: 'tool', module: 'strands-profile-fixture', export: 'tool' }],
         }),
         profileBaseDir: root,
@@ -322,19 +317,12 @@ describe('project invocation', () => {
       const servers = {
         private: { url: 'https://example.com/mcp', headers: { Authorization: 'Bearer ${STRANDS_CLI_PROJECT_TOKEN}' } },
       }
-      const args = parseArgs([
-        '--set',
-        'modelModule.export=alternateModel',
-        '--set',
-        `mcpServers=${JSON.stringify(servers)}`,
-      ])
+      const args = parseArgs(['--set', `mcpServers=${JSON.stringify(servers)}`])
 
       const reloaded = await CliConfigStore.load(path)
       reloaded.useEnvironmentFiles([join(root, '.env'), join(root, '.env.local')])
       const invocation = await invocationAgentForRun(args, reloaded, cwd)
 
-      expect(invocation.options.model).toEqual({ modelId: 'alternate-model' })
-      expect(reloaded.snapshot().profile.modelModule?.export).toBe('model')
       expect(invocation.options.tools).toEqual([{ name: 'project-tool', description: 'local-key' }])
       expect(invocation.options.mcpServers).toEqual({
         private: { url: 'https://example.com/mcp', headers: { Authorization: 'Bearer project-token' } },
@@ -358,7 +346,7 @@ describe('project invocation', () => {
       const config = CliConfigStore.memory()
       const invocation = await invocationAgentForRun(parseArgs([]), config, directory)
 
-      expect(invocation.options.skills).toBeUndefined()
+      expect(invocation.options.skills).toBe(true)
       expect(process.env.OPENAI_API_KEY).toBeUndefined()
     } finally {
       applyProviderEnvironmentValues({})

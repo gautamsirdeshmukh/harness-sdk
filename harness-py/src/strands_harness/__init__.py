@@ -4,6 +4,7 @@ from strands_harness.agent import create_harness
 from strands_harness.config import (
     DEFAULT_HARNESS_AGENT_CONFIG,
     define_harness_agent_config,
+    harness_agent_kwargs_from_config,
     normalize_harness_agent_config,
 )
 from strands_harness.defaults import BUILTIN_PLUGIN_NAMES, BUILTIN_TOOL_NAMES
@@ -58,6 +59,7 @@ __all__ = [
     "build_system_prompt",
     "create_harness",
     "define_harness_agent_config",
+    "harness_agent_kwargs_from_config",
     "normalize_harness_agent_config",
     "resolve_interventions",
     "resolve_memory",

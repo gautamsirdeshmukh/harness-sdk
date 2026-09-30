@@ -8,6 +8,7 @@ export {
   BUILTIN_TOOL_NAMES,
   DEFAULT_HARNESS_AGENT_CONFIG,
   defineHarnessAgentConfig,
+  harnessAgentOptionsFromConfig,
   type BuiltinPluginName,
   type BuiltinToolName,
   type HarnessAgentConfig,

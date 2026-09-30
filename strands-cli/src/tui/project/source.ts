@@ -159,14 +159,14 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
         ...(hasModules || usesProjectPath ? ['from pathlib import Path'] : []),
         ...(hasEnvironment || usesPythonInterpreter || hasModules || usesProjectPath ? [''] : []),
         hasModules
-          ? 'from strands_harness import create_harness\nfrom strands_harness.config import _harness_agent_kwargs_from_config'
+          ? 'from strands_harness import create_harness, harness_agent_kwargs_from_config'
           : 'from strands_harness import create_harness',
       ]
     : [
         ...(hasModules || usesProjectPath ? ["import { fileURLToPath } from 'node:url'"] : []),
         ...(usesProjectPath ? ["import { resolve } from 'node:path'"] : []),
         hasModules
-          ? "import { createHarness, defineHarnessAgentConfig } from '@strands-agents/harness'\nimport { harnessAgentOptionsFromConfig } from '@strands-agents/harness/internal'"
+          ? "import { createHarness, defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'"
           : "import { createHarness } from '@strands-agents/harness'",
       ]
   if (usesProjectPath) {
@@ -202,7 +202,7 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
     lines.push(
       '',
       python
-        ? `extensions = _harness_agent_kwargs_from_config(${literal(modules)}, Path(__file__).parent.parent)`
+        ? `extensions = harness_agent_kwargs_from_config(${literal(modules)}, Path(__file__).parent.parent)`
         : `const extensions = await harnessAgentOptionsFromConfig(defineHarnessAgentConfig(${literal(modules)}), fileURLToPath(new URL('..', import.meta.url)))`
     )
   }

@@ -428,6 +428,7 @@ def test_root_exports_match_the_spec_table():
         "build_system_prompt",
         "DEFAULT_HARNESS_AGENT_CONFIG",
         "define_harness_agent_config",
+        "harness_agent_kwargs_from_config",
         "normalize_harness_agent_config",
         "BUILTIN_TOOL_NAMES",
         "ReadConfig",
@@ -454,8 +455,6 @@ def test_root_exports_match_the_spec_table():
         "ContextManagerOption",
     }
     assert set(strands_harness.__all__) == expected
-    assert not hasattr(strands_harness, "harness_agent_kwargs_from_config")
-    assert not hasattr(strands_harness, "_harness_agent_kwargs_from_config")
     for name in expected:
         assert getattr(strands_harness, name) is not None
     assert strands_harness.supports_web_search("openai/gpt-5.6-sol") is True

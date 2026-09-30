@@ -191,7 +191,7 @@ export function agentConfig(args: ParsedArgs, defaults: HarnessAgentConfig): Har
   return normalizeHarnessAgentConfig(config)
 }
 
-export function configOverrideFields(args: ParsedArgs): Set<string> {
+export function projectConfigOverrides(args: ParsedArgs): Partial<HarnessAgentConfig> {
   const fields = new Set(args.configSet.map((assignment) => assignment.split('=')[0]!.split('.')[0]!))
   for (const key of [
     ...DIRECT_CONFIG_FLAGS,
@@ -207,11 +207,6 @@ export function configOverrideFields(args: ParsedArgs): Set<string> {
     if (args[key] !== undefined) fields.add(key)
   }
   if (args.sessionId !== undefined) fields.add('session')
-  return fields
-}
-
-export function projectConfigOverrides(args: ParsedArgs): Partial<HarnessAgentConfig> {
-  const fields = configOverrideFields(args)
   const config = agentConfig(args, DEFAULT_HARNESS_AGENT_CONFIG)
   return Object.fromEntries(Object.entries(config).filter(([key]) => fields.has(key)))
 }

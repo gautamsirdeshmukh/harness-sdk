@@ -34,7 +34,6 @@ describe('CliConfigStore', () => {
       onboarding: { version: 0 },
       providers: { enabled: ['bedrock'] },
       profile: DEFAULT_HARNESS_AGENT_CONFIG,
-      profileOverrides: {},
       permissions: { mode: 'default', allow: [] },
       settings: {
         transcriptSpacing: 'comfortable',

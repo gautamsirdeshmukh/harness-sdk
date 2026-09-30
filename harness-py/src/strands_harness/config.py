@@ -15,7 +15,7 @@ from copy import deepcopy
 from functools import reduce
 from pathlib import Path
 from types import ModuleType
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     AfterValidator,
@@ -39,6 +39,7 @@ from strands_harness.types.agent import BuiltinPluginName, BuiltinToolName, Effo
 __all__ = [
     "DEFAULT_HARNESS_AGENT_CONFIG",
     "define_harness_agent_config",
+    "harness_agent_kwargs_from_config",
     "normalize_harness_agent_config",
 ]
 
@@ -122,15 +123,13 @@ def _describe(error: ValidationError, config: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _harness_agent_kwargs_from_config(value: object, base_dir: str | Path = ".") -> dict[str, Any]:
+def harness_agent_kwargs_from_config(value: object, base_dir: str | Path = ".") -> dict[str, Any]:
     """Load executable references and convert portable config to ``create_harness`` kwargs.
 
-    Omitted options are left to the harness factory.
     Local multi-file modules must use regular ``__init__.py`` packages and explicit relative imports.
     Bare imports use Python's normal import path; project directories are not added to ``sys.path``.
     """
     config = normalize_harness_agent_config(value)
-    provided = cast(dict[str, Any], value)
     root = Path(base_dir).resolve()
     tools = _load_many(config["tools"], root)
     subagents = _load_many(config["subagents"], root, invoke=True)
@@ -144,19 +143,17 @@ def _harness_agent_kwargs_from_config(value: object, base_dir: str | Path = ".")
     }
     kwargs = deepcopy(config["agentConfig"])
     kwargs.update(agent_config_modules)
-    for field in ("name", "effort"):
-        if field in provided:
-            kwargs[field] = config[field]
-    if model is not None or "model" in provided:
-        kwargs["model"] = config["model"] if model is None else model
-    if "contextManager" in provided:
-        kwargs["context_manager"] = config["contextManager"]
-    if "session" in provided:
-        kwargs["session"] = _session_kwarg(config["session"], root)
-    if "skills" in provided:
-        kwargs["skills"] = _skills_kwarg(config["skills"], root)
-    if "memory" in provided or stores:
-        kwargs["memory"] = _memory_kwarg(config["memory"], stores, root)
+    kwargs.update(
+        {
+            "name": config["name"],
+            "model": config["model"] if model is None else model,
+            "effort": config["effort"],
+            "context_manager": config["contextManager"],
+            "session": _session_kwarg(config["session"], root),
+            "skills": _skills_kwarg(config["skills"], root),
+            "memory": _memory_kwarg(config["memory"], stores, root),
+        }
+    )
     builtin_tools = _builtin_tools_kwarg(config["builtinTools"], root)
     if builtin_tools is not None:
         kwargs["builtin_tools"] = builtin_tools

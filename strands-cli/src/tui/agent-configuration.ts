@@ -1,4 +1,8 @@
-import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
+import {
+  DEFAULT_HARNESS_AGENT_CONFIG,
+  harnessAgentOptionsFromConfig,
+  type HarnessAgentConfig,
+} from '@strands-agents/harness'
 import {
   normalizeHarnessAgentConfig,
   resolveBuiltinTools,
@@ -12,7 +16,6 @@ import { validateNoConfigSecrets } from './project/configuration.js'
 import { EXA_WEB_SEARCH_WARNING, builtinToolChoices, withBuiltinToolChoice } from './builtin-tools.js'
 import {
   PROVIDER_IDS,
-  agentOptionsFromOverrides,
   normalizeToolName,
   type CliConfigStore,
   type SetupConfiguration,
@@ -272,8 +275,8 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
           const validatingRevision = revision
           const environment = options.config.providerEnvironment()
           const profile = configuration.profile
-          const agentOptions = await agentOptionsFromOverrides(
-            options.config.profileOverrides(profile),
+          const agentOptions = await harnessAgentOptionsFromConfig(
+            profile,
             configuration.profileBaseDir ?? process.cwd()
           )
           if (!profile.modelModule) {

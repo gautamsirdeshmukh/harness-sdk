@@ -165,7 +165,6 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         await config!.saveSetup(previousConfiguration, {
           onboardingVersion: previous!.onboarding.version,
           agentProject: previous!.agentProject,
-          profileOverrides: previous!.profileOverrides,
           persist: false,
         })
       }

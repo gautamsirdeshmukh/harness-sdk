@@ -1,8 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defineHarnessAgentConfig } from '@strands-agents/harness'
-import { harnessAgentOptionsFromConfig } from '@strands-agents/harness/internal'
+import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
 import { expect, it } from 'vitest'
 
 it('loads ESM authoring folders and import-only packages using exported module semantics', async () => {
