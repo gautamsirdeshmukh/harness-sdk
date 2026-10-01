@@ -5,7 +5,6 @@ import { dirname, join, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import {
-  DEFAULT_HARNESS_AGENT_CONFIG,
   defineHarnessAgentConfig,
   harnessAgentOptionsFromConfig,
   type Effort,
@@ -96,7 +95,11 @@ export async function agentOptionsFromOverrides(
   profile: Partial<HarnessAgentConfig>,
   baseDir: string
 ): Promise<HarnessAgentOptions> {
-  const options = await harnessAgentOptionsFromConfig(defineHarnessAgentConfig(profile), baseDir)
+  const config = defineHarnessAgentConfig(profile)
+  const options = await harnessAgentOptionsFromConfig(config, baseDir)
+  for (const key of ['builtinTools', 'builtinPlugins', 'caching', 'description', 'instructions'] as const) {
+    if (Object.hasOwn(profile, key)) Object.assign(options, { [key]: config[key] })
+  }
   const configured = new Set([
     ...Object.keys(profile),
     ...Object.keys(profile.agentConfig ?? {}),
@@ -340,9 +343,13 @@ export class CliConfigStore {
   profileOverrides(profile = this._profile): Partial<HarnessAgentConfig> {
     const saved = isRecord(this._document.profile) ? this._document.profile : {}
     return globalThis.structuredClone(
-      Object.fromEntries(
-        Object.entries(profile).filter(
-          ([key, value]) => key in saved || !isDeepStrictEqual(value, this._profile[key as keyof HarnessAgentConfig])
+      Object.assign(
+        {},
+        saved,
+        Object.fromEntries(
+          Object.entries(profile).filter(
+            ([key, value]) => !isDeepStrictEqual(value, this._profile[key as keyof HarnessAgentConfig])
+          )
         )
       )
     )
@@ -489,7 +496,7 @@ function parseProviderEnvironment(value: unknown, path: string): ProviderEnviron
 
 function parseProfile(value: unknown, path: string): HarnessAgentConfig {
   if (value === undefined) {
-    return globalThis.structuredClone(DEFAULT_HARNESS_AGENT_CONFIG)
+    return defineHarnessAgentConfig({})
   }
   if (!isRecord(value)) {
     throw new Error(`Invalid CLI config at ${path}: profile must be an object`)

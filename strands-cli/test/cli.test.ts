@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { URL, fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import { DEFAULT_HARNESS_AGENT_CONFIG, defineHarnessAgentConfig } from '@strands-agents/harness'
+import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import type { Agent } from '@strands-agents/sdk'
 
 import { main, runPlainChat, selectRunMode } from '../src/cli/run.js'
@@ -18,9 +18,11 @@ import { resolveMcpConfig } from '../src/tui/workspace/trust.js'
 import { applyProviderEnvironmentValues, CliConfigStore } from '../src/tui/config.js'
 
 describe('agentConfig', () => {
+  const defaults = defineHarnessAgentConfig({})
+
   it('preserves defaults when no flags are supplied', () => {
-    const config = agentConfig(parseArgs([]), DEFAULT_HARNESS_AGENT_CONFIG)
-    expect(config).toEqual(DEFAULT_HARNESS_AGENT_CONFIG)
+    const config = agentConfig(parseArgs([]), defaults)
+    expect(config).toEqual(defaults)
   })
 
   it('maps flags to config', () => {
@@ -52,7 +54,7 @@ describe('agentConfig', () => {
       '--interventions',
       'ask',
     ])
-    const config = agentConfig(args, DEFAULT_HARNESS_AGENT_CONFIG)
+    const config = agentConfig(args, defaults)
     expect(config.name).toBe('Reviewer')
     expect(config.description).toBe('Reviews code')
     expect(config.model).toBe('bedrock/global.anthropic.claude-sonnet-5')
@@ -69,23 +71,19 @@ describe('agentConfig', () => {
   })
 
   it('writes --session-id into session.id, keeping any --set sub-keys', () => {
-    expect(agentConfig(parseArgs(['--session-id', 'u1']), DEFAULT_HARNESS_AGENT_CONFIG).session).toEqual({ id: 'u1' })
-    expect(
-      agentConfig(parseArgs(['--set', 'session.dir="/tmp/s"', '--session-id', 'u1']), DEFAULT_HARNESS_AGENT_CONFIG)
-        .session
-    ).toEqual({ id: 'u1', dir: '/tmp/s' })
-    expect(
-      agentConfig(parseArgs(['--session-id', 'u1']), { ...DEFAULT_HARNESS_AGENT_CONFIG, session: false }).session
-    ).toBe(false)
-    expect(
-      agentConfig(parseArgs(['--session', 'on', '--session-id', 'u1']), DEFAULT_HARNESS_AGENT_CONFIG).session
-    ).toEqual({ id: 'u1' })
+    expect(agentConfig(parseArgs(['--session-id', 'u1']), defaults).session).toEqual({ id: 'u1' })
+    expect(agentConfig(parseArgs(['--set', 'session.dir="/tmp/s"', '--session-id', 'u1']), defaults).session).toEqual({
+      id: 'u1',
+      dir: '/tmp/s',
+    })
+    expect(agentConfig(parseArgs(['--session-id', 'u1']), { ...defaults, session: false }).session).toBe(false)
+    expect(agentConfig(parseArgs(['--session', 'on', '--session-id', 'u1']), defaults).session).toEqual({ id: 'u1' })
   })
 
   it('maps off sentinels to disabled', () => {
     const config = agentConfig(
       parseArgs(['--effort', 'off', '--context-manager', 'off', '--skills', 'off', '--caching', 'off']),
-      DEFAULT_HARNESS_AGENT_CONFIG
+      defaults
     )
     expect(config.effort).toBe('off')
     expect(config.contextManager).toBe(false)
@@ -95,35 +93,31 @@ describe('agentConfig', () => {
 
   it.each(['--session', '--memory'])('%s accepts on or off and rejects other modes', (flag) => {
     const key = flag.slice(2) as 'session' | 'memory'
-    expect(agentConfig(parseArgs([flag, 'on']), { ...DEFAULT_HARNESS_AGENT_CONFIG, [key]: false })[key]).toBe(true)
-    expect(agentConfig(parseArgs([flag, 'off']), DEFAULT_HARNESS_AGENT_CONFIG)[key]).toBe(false)
-    expect(() => agentConfig(parseArgs([flag, 'auto']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
-      `${flag} must be 'on' or 'off'.`
-    )
+    expect(agentConfig(parseArgs([flag, 'on']), { ...defaults, [key]: false })[key]).toBe(true)
+    expect(agentConfig(parseArgs([flag, 'off']), defaults)[key]).toBe(false)
+    expect(() => agentConfig(parseArgs([flag, 'auto']), defaults)).toThrow(`${flag} must be 'on' or 'off'.`)
   })
 
   it.each(['--session', '--memory'])('%s on keeps a configured dir', (flag) => {
     const key = flag.slice(2) as 'session' | 'memory'
     const dir = `/tmp/${key}`
-    expect(agentConfig(parseArgs([flag, 'on']), { ...DEFAULT_HARNESS_AGENT_CONFIG, [key]: { dir } })[key]).toEqual({
+    expect(agentConfig(parseArgs([flag, 'on']), { ...defaults, [key]: { dir } })[key]).toEqual({
       dir,
     })
-    expect(
-      agentConfig(parseArgs(['--set', `${key}.dir="${dir}"`, flag, 'on']), DEFAULT_HARNESS_AGENT_CONFIG)[key]
-    ).toEqual({
+    expect(agentConfig(parseArgs(['--set', `${key}.dir="${dir}"`, flag, 'on']), defaults)[key]).toEqual({
       dir,
     })
   })
 
   it.each(['bogus', 'none'])('rejects the effort level %s with the allowed set', (level) => {
-    expect(() => agentConfig(parseArgs(['--effort', level]), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
+    expect(() => agentConfig(parseArgs(['--effort', level]), defaults)).toThrow(
       'effort must be one of: auto, off, minimal, low, medium, high, xhigh, max.'
     )
   })
 
   it('enables caching and sessions when explicit flags override a saved disabled profile', () => {
     const config = agentConfig(parseArgs(['--caching', 'auto', '--session', 'on']), {
-      ...DEFAULT_HARNESS_AGENT_CONFIG,
+      ...defaults,
       caching: false,
       session: false,
     })
@@ -131,33 +125,23 @@ describe('agentConfig', () => {
   })
 
   it('treats empty builtin lists as none', () => {
-    const config = agentConfig(
-      parseArgs(['--builtin-tools', '', '--builtin-plugins', '']),
-      DEFAULT_HARNESS_AGENT_CONFIG
-    )
+    const config = agentConfig(parseArgs(['--builtin-tools', '', '--builtin-plugins', '']), defaults)
     expect(config).toMatchObject({ builtinTools: [], builtinPlugins: [] })
   })
 
   it('passes comma-separated skills entries through unfiltered as an array', () => {
-    const config = agentConfig(
-      parseArgs(['--skills', '/tmp/a,/tmp/missing,https://example.com/skills']),
-      DEFAULT_HARNESS_AGENT_CONFIG
-    )
+    const config = agentConfig(parseArgs(['--skills', '/tmp/a,/tmp/missing,https://example.com/skills']), defaults)
     expect(config.skills).toEqual(['/tmp/a', '/tmp/missing', 'https://example.com/skills'])
   })
 
   it('accepts supported provider prefixes and rejects unknown providers', () => {
-    expect(agentConfig(parseArgs(['--model', 'openai/gpt-5.6-sol']), DEFAULT_HARNESS_AGENT_CONFIG).model).toBe(
-      'openai/gpt-5.6-sol'
-    )
-    expect(() => agentConfig(parseArgs(['--model', 'unknown/model']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
-      'supported provider/model'
-    )
+    expect(agentConfig(parseArgs(['--model', 'openai/gpt-5.6-sol']), defaults).model).toBe('openai/gpt-5.6-sol')
+    expect(() => agentConfig(parseArgs(['--model', 'unknown/model']), defaults)).toThrow('supported provider/model')
   })
 
   it('lets explicit flags override saved profile defaults', () => {
     const config = agentConfig(parseArgs(['--model', 'google/gemini-3.5-flash', '--effort', 'low']), {
-      ...DEFAULT_HARNESS_AGENT_CONFIG,
+      ...defaults,
       model: 'openai/gpt-5.6-sol',
       effort: 'high',
       instructions: 'saved profile',
@@ -183,7 +167,7 @@ describe('agentConfig', () => {
         'google/gemini-3.5-flash',
       ]),
       {
-        ...DEFAULT_HARNESS_AGENT_CONFIG,
+        ...defaults,
         instructions: 'saved profile',
       }
     )
@@ -197,14 +181,12 @@ describe('agentConfig', () => {
   })
 
   it('rejects malformed and unknown arbitrary config fields', () => {
-    expect(() => agentConfig(parseArgs(['--set', 'missing']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
-      '--set expects field=value'
-    )
-    expect(() => agentConfig(parseArgs(['--set', 'modle=openai/gpt-5-mini']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
+    expect(() => agentConfig(parseArgs(['--set', 'missing']), defaults)).toThrow('--set expects field=value')
+    expect(() => agentConfig(parseArgs(['--set', 'modle=openai/gpt-5-mini']), defaults)).toThrow(
       'unknown agent config field'
     )
     // A retired profile key is just another unknown field.
-    expect(() => agentConfig(parseArgs(['--set', 'thinking=high']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
+    expect(() => agentConfig(parseArgs(['--set', 'thinking=high']), defaults)).toThrow(
       '--set contains an unknown agent config field "thinking".'
     )
   })
@@ -352,6 +334,8 @@ describe('project invocation', () => {
   it.each([
     { argv: [], options: { printer: false } },
     { argv: ['--model', 'openai/gpt-5.6-sol'], options: { model: 'openai/gpt-5.6-sol', printer: false } },
+    { argv: ['--skills', 'off', '--memory', 'off'], options: { skills: false, memory: false, printer: false } },
+    { argv: ['--caching', 'auto'], options: { caching: true, printer: false } },
   ])('passes only explicit overrides to createHarness: $argv', async ({ argv, options }) => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-cli-profile-'))
     try {

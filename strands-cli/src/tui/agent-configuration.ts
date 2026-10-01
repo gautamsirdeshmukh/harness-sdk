@@ -1,4 +1,4 @@
-import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
+import { defineHarnessAgentConfig, type HarnessAgentConfig } from '@strands-agents/harness'
 import {
   normalizeHarnessAgentConfig,
   resolveBuiltinTools,
@@ -177,6 +177,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
       }
       if (request.action === 'inspect') {
         const configuration = current()
+        const defaults = defineHarnessAgentConfig({})
         return JSON.stringify({
           revision,
           target: options.source ? { source: options.source } : { config: options.config.snapshot().path },
@@ -194,8 +195,8 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
           allowedTools: configuration.allowedTools,
           providers: configuration.providers,
           builtins: {
-            tools: DEFAULT_HARNESS_AGENT_CONFIG.builtinTools,
-            plugins: DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins,
+            tools: defaults.builtinTools,
+            plugins: defaults.builtinPlugins,
           },
         })
       }
@@ -206,15 +207,13 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         const previous = current()
         const patch = request.profile === undefined ? {} : record(request.profile, 'profile')
         assertNoRedactedValues(patch)
+        const defaults = defineHarnessAgentConfig({})
         for (const key of Object.keys(patch)) {
-          if (!Object.hasOwn(DEFAULT_HARNESS_AGENT_CONFIG, key)) {
+          if (!Object.hasOwn(defaults, key)) {
             throw new Error(`Unknown profile field: ${key}. Use inspect for supported field names.`)
           }
         }
-        validateNoConfigSecrets(
-          { ...DEFAULT_HARNESS_AGENT_CONFIG, ...patch },
-          typeof patch.mcpServers === 'string' ? {} : undefined
-        )
+        validateNoConfigSecrets(defineHarnessAgentConfig(patch), typeof patch.mcpServers === 'string' ? {} : undefined)
         const profile = { ...previous.profile } as Record<string, unknown>
         for (const [key, value] of Object.entries(patch)) {
           const existing = profile[key]
@@ -293,10 +292,10 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
             }
             await resolveModel(
               profile.model,
-              DEFAULT_HARNESS_AGENT_CONFIG.model,
-              agentOptions.effort,
+              profile.model,
+              agentOptions.effort ?? profile.effort,
               webSearch === 'native',
-              agentOptions.caching === undefined ? DEFAULT_HARNESS_AGENT_CONFIG.caching : Boolean(agentOptions.caching),
+              agentOptions.caching === undefined ? profile.caching : Boolean(agentOptions.caching),
               agentOptions.caching !== undefined
             )
           }
@@ -386,7 +385,7 @@ function parseAllowedTools(value: unknown): string[] {
 
 function redactedProfile(profile: HarnessAgentConfig): unknown {
   return redactConfigValue(profile, (value) => {
-    const candidate = { ...DEFAULT_HARNESS_AGENT_CONFIG, ...record(value, 'profile') }
+    const candidate = defineHarnessAgentConfig(record(value, 'profile'))
     validateNoConfigSecrets(candidate, typeof candidate.mcpServers === 'string' ? {} : undefined)
   })
 }

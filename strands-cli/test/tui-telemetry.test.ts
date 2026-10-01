@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
+import { defineHarnessAgentConfig, type HarnessAgentConfig } from '@strands-agents/harness'
 
 import { enabledProfileTools } from '../src/tui/builtin-tools.js'
 import { DEFAULT_CHAT_SETTINGS, parseSettings, parseSettingUpdate } from '../src/tui/settings.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled, TELEMETRY_ENDPOINT } from '../src/tui/telemetry.js'
 
-const profile: HarnessAgentConfig = { ...DEFAULT_HARNESS_AGENT_CONFIG, model: 'anthropic/claude-sonnet-4-5' }
+const defaults = defineHarnessAgentConfig({})
+const profile: HarnessAgentConfig = { ...defaults, model: 'anthropic/claude-sonnet-4-5' }
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -15,8 +16,8 @@ describe('buildTelemetryPing', () => {
       v: 1,
       cli_version: '1.2.3',
       provider: 'anthropic',
-      builtin_tools: enabledProfileTools(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools),
-      builtin_plugins: [...DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins],
+      builtin_tools: enabledProfileTools(defaults.builtinTools),
+      builtin_plugins: [...defaults.builtinPlugins],
     })
   })
 

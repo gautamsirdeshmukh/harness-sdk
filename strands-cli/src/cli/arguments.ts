@@ -1,5 +1,5 @@
 import { Command } from 'commander'
-import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
+import { defineHarnessAgentConfig, type HarnessAgentConfig } from '@strands-agents/harness'
 import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 
 import { readCliVersion } from '../tui/package-version.js'
@@ -212,7 +212,7 @@ export function configOverrideFields(args: ParsedArgs): Set<string> {
 
 export function projectConfigOverrides(args: ParsedArgs): Partial<HarnessAgentConfig> {
   const fields = configOverrideFields(args)
-  const config = agentConfig(args, DEFAULT_HARNESS_AGENT_CONFIG)
+  const config = agentConfig(args, defineHarnessAgentConfig({}))
   return Object.fromEntries(Object.entries(config).filter(([key]) => fields.has(key)))
 }
 
@@ -241,7 +241,7 @@ function applyConfigAssignment(config: Record<string, unknown>, assignment: stri
   ) {
     throw new Error(`--set contains an invalid config field ${JSON.stringify(path)}.`)
   }
-  if (!(keys[0]! in DEFAULT_HARNESS_AGENT_CONFIG)) {
+  if (!(keys[0]! in config)) {
     throw new Error(`--set contains an unknown agent config field ${JSON.stringify(keys[0])}.`)
   }
   let target = config

@@ -8,7 +8,7 @@ import {
   type ProviderEnvironmentKey,
   type ProviderId,
 } from '../../config.js'
-import { DEFAULT_HARNESS_AGENT_CONFIG, supportsWebSearch, type HarnessAgentConfig } from '@strands-agents/harness'
+import { defineHarnessAgentConfig, supportsWebSearch, type HarnessAgentConfig } from '@strands-agents/harness'
 import type { AwsConfigurationDiscovery, LiteLlmDiscovery, OllamaDiscovery } from '../../provider/discovery.js'
 import { webSearchFallback, withoutProfileTool } from '../../builtin-tools.js'
 import { missingProviderPackage } from '../../provider/packages.js'
@@ -51,7 +51,7 @@ export const PROVIDERS: Readonly<
   >
 > = {
   bedrock: {
-    model: () => DEFAULT_HARNESS_AGENT_CONFIG.model,
+    model: () => defineHarnessAgentConfig({}).model,
     fields: AWS_FIELDS,
   },
   'bedrock-mantle': {
@@ -82,14 +82,15 @@ export const PROVIDERS: Readonly<
 
 export function quickstartDraft(provider: ProviderId, environment: DetectedProviderEnvironment): SetupDraft {
   const localProvider = provider === 'ollama' || provider === 'litellm'
+  const defaults = defineHarnessAgentConfig({})
   return {
     providers: [provider],
     profile: compatibleProfile({
-      ...DEFAULT_HARNESS_AGENT_CONFIG,
+      ...defaults,
       model: PROVIDERS[provider].model(environment),
-      builtinTools: withoutProfileTool(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools, 'web_search'),
+      builtinTools: withoutProfileTool(defaults.builtinTools, 'web_search'),
       caching: !localProvider,
-      effort: localProvider ? 'off' : DEFAULT_HARNESS_AGENT_CONFIG.effort,
+      effort: localProvider ? 'off' : defaults.effort,
     }),
     permissionMode: 'default',
     allowedTools: [],

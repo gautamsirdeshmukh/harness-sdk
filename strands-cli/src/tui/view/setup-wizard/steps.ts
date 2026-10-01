@@ -6,7 +6,7 @@ import {
   type ProviderEnvironment,
   type ProviderId,
 } from '../../config.js'
-import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
+import { defineHarnessAgentConfig, type HarnessAgentConfig } from '@strands-agents/harness'
 import type { AwsConfigurationDiscovery, LiteLlmDiscovery, OllamaDiscovery } from '../../provider/discovery.js'
 import { effortOptions, profileEffort, effortDisplayLabel, effortForModel } from '../../model/selection.js'
 import {
@@ -625,15 +625,16 @@ function pluginSelectionRows(
       description: '',
       activate: (): void => {
         const enabled = !allSelected
+        const defaults = defineHarnessAgentConfig({})
         setDraft((current) => ({
           ...current,
           settings: { mcpDiscovery: enabled, skillDiscovery: enabled, agentMessaging: enabled },
           profile: compatibleProfile({
             ...current.profile,
-            builtinPlugins: enabled ? DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins : [],
+            builtinPlugins: enabled ? defaults.builtinPlugins : [],
             skills: enabled,
             memory: enabled,
-            contextManager: enabled ? DEFAULT_HARNESS_AGENT_CONFIG.contextManager : false,
+            contextManager: enabled ? defaults.contextManager : false,
             agentConfig: { ...current.profile.agentConfig, backgroundTasks: enabled },
           }),
         }))

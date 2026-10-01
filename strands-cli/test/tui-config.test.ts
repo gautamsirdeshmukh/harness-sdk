@@ -2,11 +2,12 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
+import { defineHarnessAgentConfig } from '@strands-agents/harness'
 
 import { applyProviderEnvironmentValues, SETUP_VERSION, CliConfigStore } from '../src/tui/config.js'
 
 const temporaryDirectories: string[] = []
+const defaults = defineHarnessAgentConfig({})
 
 afterEach(async () => {
   applyProviderEnvironmentValues({})
@@ -33,7 +34,7 @@ describe('CliConfigStore', () => {
       path,
       onboarding: { version: 0 },
       providers: { enabled: ['bedrock'] },
-      profile: DEFAULT_HARNESS_AGENT_CONFIG,
+      profile: defaults,
       profileOverrides: {},
       permissions: { mode: 'default', allow: [] },
       settings: {
@@ -165,8 +166,9 @@ describe('CliConfigStore', () => {
     const path = join(await temporaryDirectory(), 'config.json')
     await writeFile(path, JSON.stringify({ theme: 'custom', profile: { futureSetting: true } }))
     const config = await CliConfigStore.load(path)
+    expect(config.snapshot().profileOverrides).toEqual({ futureSetting: true })
     const profile = {
-      ...DEFAULT_HARNESS_AGENT_CONFIG,
+      ...defaults,
       name: 'Reviewer',
       instructions: 'Review changes carefully.',
       model: 'openai/gpt-5.6-sol',
@@ -225,7 +227,7 @@ describe('CliConfigStore', () => {
     await expect(
       config.saveSetup({
         providers: [],
-        profile: DEFAULT_HARNESS_AGENT_CONFIG,
+        profile: defaults,
         permissionMode: 'bypassPermissions',
         providerEnvironment: {},
       })
@@ -238,7 +240,7 @@ describe('CliConfigStore', () => {
     const config = await CliConfigStore.load(path)
     const setup = {
       providers: ['bedrock'] as const,
-      profile: DEFAULT_HARNESS_AGENT_CONFIG,
+      profile: defaults,
       permissionMode: 'default' as const,
       providerEnvironment: {},
     }
@@ -263,7 +265,7 @@ describe('CliConfigStore', () => {
     const config = await CliConfigStore.load(path)
     await config.saveSetup({
       providers: ['openai', 'anthropic'],
-      profile: DEFAULT_HARNESS_AGENT_CONFIG,
+      profile: defaults,
       profileBaseDir: directory,
       permissionMode: 'default',
       providerEnvironment: {},
@@ -292,7 +294,7 @@ describe('CliConfigStore', () => {
     const config = await CliConfigStore.load(path)
     const setup = {
       providers: ['bedrock'] as const,
-      profile: DEFAULT_HARNESS_AGENT_CONFIG,
+      profile: defaults,
       permissionMode: 'default' as const,
       providerEnvironment: {},
     }
@@ -382,7 +384,7 @@ describe('CliConfigStore', () => {
     expect(process.env.OPENAI_API_KEY).toBe('session-key')
     await config.saveSetup({
       providers: ['openai'],
-      profile: { ...DEFAULT_HARNESS_AGENT_CONFIG, model: 'openai/gpt-5.6-sol' },
+      profile: { ...defaults, model: 'openai/gpt-5.6-sol' },
       permissionMode: 'default',
       providerEnvironment: {},
     })

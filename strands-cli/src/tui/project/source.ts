@@ -1,9 +1,10 @@
-import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
+import { defineHarnessAgentConfig, type HarnessAgentConfig } from '@strands-agents/harness'
 
 import { webFetchModelModule } from '../builtin-tools.js'
 import type { AgentProjectLanguage } from './import.js'
 
 export function agentProjectSource(config: HarnessAgentConfig, language: AgentProjectLanguage): string {
+  const defaults = defineHarnessAgentConfig({})
   const python = language === 'python'
   const literal = (value: unknown): string => sourceLiteral(value, python)
   let usesProjectPath = false
@@ -47,7 +48,7 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
   if (config.memory !== false) {
     load('memoryStores', 'memory')
     // The loader resolves `memory` from the stores plus the memory config, so a custom `dir` rides along.
-    if (loadedOptions.has(optionName('memory')) && !sameJson(config.memory, DEFAULT_HARNESS_AGENT_CONFIG.memory)) {
+    if (loadedOptions.has(optionName('memory')) && !sameJson(config.memory, defaults.memory)) {
       modules.memory = config.memory
     }
   }
@@ -79,7 +80,7 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
   if (config.instructions) {
     set('instructions', config.instructions)
   }
-  if (config.effort !== DEFAULT_HARNESS_AGENT_CONFIG.effort) {
+  if (config.effort !== defaults.effort) {
     set('effort', config.effort)
   } else {
     options.delete(optionName('effort'))
@@ -92,16 +93,16 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
     if (key === 'builtinTools' && webFetchModule) {
       continue
     }
-    if (!sameJson(config[key], DEFAULT_HARNESS_AGENT_CONFIG[key])) {
+    if (!sameJson(config[key], defaults[key])) {
       set(key, config[key])
     }
   }
-  if (!sameJson(config.contextManager, DEFAULT_HARNESS_AGENT_CONFIG.contextManager)) {
+  if (!sameJson(config.contextManager, defaults.contextManager)) {
     set('contextManager', config.contextManager)
   } else {
     options.delete(optionName('contextManager'))
   }
-  if (!sameJson(config.skills, DEFAULT_HARNESS_AGENT_CONFIG.skills)) {
+  if (!sameJson(config.skills, defaults.skills)) {
     expression(
       'skills',
       typeof config.skills === 'string'
@@ -113,13 +114,13 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
   } else {
     options.delete('skills')
   }
-  if (!sameJson(config.session, DEFAULT_HARNESS_AGENT_CONFIG.session)) {
+  if (!sameJson(config.session, defaults.session)) {
     set('session', config.session)
   } else {
     options.delete('session')
   }
   if (!loadedOptions.has(optionName('memory'))) {
-    if (!sameJson(config.memory, DEFAULT_HARNESS_AGENT_CONFIG.memory)) {
+    if (!sameJson(config.memory, defaults.memory)) {
       set('memory', config.memory)
     } else {
       options.delete('memory')

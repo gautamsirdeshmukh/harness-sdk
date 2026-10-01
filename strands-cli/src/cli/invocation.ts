@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import {
-  DEFAULT_HARNESS_AGENT_CONFIG,
+  defineHarnessAgentConfig,
   harnessAgentOptionsFromConfig,
   type HarnessAgentConfig,
   type HarnessAgentOptions,
@@ -87,7 +87,7 @@ async function projectOverrides(
   authored: HarnessAgentOptions
 ): Promise<HarnessAgentOptions> {
   const fields = new Set(Object.keys(projectConfigOverrides(args)))
-  const base = { ...DEFAULT_HARNESS_AGENT_CONFIG }
+  const base = defineHarnessAgentConfig({})
   for (const assignment of args.configSet) {
     const path = assignment.slice(0, assignment.indexOf('=')).split('.')
     const field = path[0]!

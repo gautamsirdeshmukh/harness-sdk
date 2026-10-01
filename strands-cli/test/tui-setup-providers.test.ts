@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
+import { defineHarnessAgentConfig } from '@strands-agents/harness'
 
 import type { DetectedProviderEnvironment } from '../src/tui/config.js'
 import {
@@ -352,14 +352,16 @@ describe('setup provider credentials', () => {
 })
 
 describe('setup web_search availability', () => {
+  const defaults = defineHarnessAgentConfig({})
+
   it.each(['bedrock', 'bedrock-mantle', 'openai'] as const)(
     'enables every quickstart capability except web_search for %s',
     (provider) => {
       const draft = quickstartDraft(provider, {})
       expect(enabledProfileTools(draft.profile.builtinTools)).toEqual(
-        enabledProfileTools(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools).filter((tool) => tool !== 'web_search')
+        enabledProfileTools(defaults.builtinTools).filter((tool) => tool !== 'web_search')
       )
-      expect(draft.profile.builtinPlugins).toEqual(DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins)
+      expect(draft.profile.builtinPlugins).toEqual(defaults.builtinPlugins)
       expect(draft.settings).toEqual({ mcpDiscovery: true, skillDiscovery: true, agentMessaging: true })
     }
   )
