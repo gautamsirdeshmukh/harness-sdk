@@ -28,7 +28,7 @@ it.each([
     settings: {},
     onboardingVersion: 0,
     args: [],
-    expected: false,
+    expected: true,
   },
   {
     name: 'explicit setup',
@@ -40,21 +40,40 @@ it.each([
   {
     name: 'explicit agent',
     settings: {},
-    onboardingVersion: SETUP_VERSION,
+    onboardingVersion: 0,
     args: ['--agent', './agent.ts'],
     expected: false,
   },
   {
     name: 'explicit setup and agent',
     settings: {},
-    onboardingVersion: SETUP_VERSION,
+    onboardingVersion: 0,
     args: ['--setup', '--agent', './agent.ts'],
     expected: true,
   },
-])('selects startup setup for $name', async ({ settings, onboardingVersion, args, expected }) => {
-  vi.spyOn(CliConfigStore, 'load').mockResolvedValue(
-    CliConfigStore.memory({}, parseSettings(settings, 'test/config.json'), { onboardingVersion })
-  )
+  {
+    name: 'saved agent',
+    settings: {},
+    onboardingVersion: 0,
+    agentProject: './agent.ts',
+    args: [],
+    expected: false,
+  },
+  {
+    name: 'explicit setup and saved agent',
+    settings: {},
+    onboardingVersion: 0,
+    agentProject: './agent.ts',
+    args: ['--setup'],
+    expected: true,
+  },
+])('selects startup setup for $name', async (testCase) => {
+  const { settings, onboardingVersion, args, expected } = testCase
+  const config = CliConfigStore.memory({}, parseSettings(settings, 'test/config.json'), { onboardingVersion })
+  if ('agentProject' in testCase) {
+    vi.spyOn(config, 'snapshot').mockReturnValue({ ...config.snapshot(), agentProject: testCase.agentProject })
+  }
+  vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config)
   const stdinIsTTY = process.stdin.isTTY
   const stdoutIsTTY = process.stdout.isTTY
   process.stdin.isTTY = true

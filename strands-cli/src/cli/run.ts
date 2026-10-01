@@ -264,7 +264,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       {
         ...(request ? { firstRequest: request } : {}),
         intro: config.snapshot().settings.animations,
-        setup: args.setup,
+        setup: args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup()),
         config,
       }
     )
