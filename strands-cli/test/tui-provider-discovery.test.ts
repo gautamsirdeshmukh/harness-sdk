@@ -210,6 +210,7 @@ describe('provider model discovery endpoints', () => {
       'ANTHROPIC_BASE_URL',
       'https://api.anthropic.com/v1/models?limit=1000',
       'https://proxy.example/custom/v1/models?limit=1000',
+      { 'x-api-key': 'test-key' },
     ],
     [
       'openai',
@@ -217,17 +218,19 @@ describe('provider model discovery endpoints', () => {
       'OPENAI_BASE_URL',
       'https://api.openai.com/v1/models',
       'https://proxy.example/custom/models',
+      { authorization: 'Bearer test-key' },
     ],
     [
       'google',
       { GEMINI_API_KEY: { value: 'test-key', source: 'process' } },
       'GOOGLE_GEMINI_BASE_URL',
-      'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=test-key',
-      'https://proxy.example/custom/v1beta/models?pageSize=1000&key=test-key',
+      'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000',
+      'https://proxy.example/custom/v1beta/models?pageSize=1000',
+      { 'x-goog-api-key': 'test-key' },
     ],
   ] as const)(
     'lists %s models from the base URL its SDK uses at runtime',
-    async (provider, credential, baseUrlKey, defaultUrl, customUrl) => {
+    async (provider, credential, baseUrlKey, defaultUrl, customUrl, auth) => {
       const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => globalThis.Response.json({}))
 
       await discoverProviderModels(provider, credential)
@@ -236,7 +239,11 @@ describe('provider model discovery endpoints', () => {
         [baseUrlKey]: { value: 'https://proxy.example/custom/', source: 'process' },
       })
 
-      expect(fetch.mock.calls.map(([url]) => url)).toEqual([defaultUrl, customUrl])
+      const request = expect.objectContaining({ headers: expect.objectContaining(auth) })
+      expect(fetch.mock.calls).toEqual([
+        [defaultUrl, request],
+        [customUrl, request],
+      ])
     }
   )
 })

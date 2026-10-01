@@ -317,7 +317,7 @@ async function listAnthropicModels(root: string, apiKey: string): Promise<readon
 }
 
 async function listGoogleModels(root: string, apiKey: string): Promise<readonly ProviderModel[]> {
-  const value = await fetchJson(`${root}/v1beta/models?pageSize=1000&key=${encodeURIComponent(apiKey)}`)
+  const value = await fetchJson(`${root}/v1beta/models?pageSize=1000`, { 'x-goog-api-key': apiKey })
   return recordArray(value, 'models')
     .filter(
       (model) =>
