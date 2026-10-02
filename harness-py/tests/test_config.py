@@ -116,6 +116,14 @@ def test_config_leaves_omitted_keys_to_create_harness(tmp_path):
     assert harness_agent_kwargs_from_config({}, tmp_path) == {}
 
 
+def test_config_keeps_explicit_null_and_rejects_null_on_non_nullable_keys(tmp_path):
+    nulls = {"modelModule": None, "sandbox": None, "interventions": None}
+    assert normalize_harness_agent_config(nulls) == nulls
+    assert harness_agent_kwargs_from_config(nulls, tmp_path) == {}
+    with pytest.raises(ValueError, match="name: Input should be a valid string"):
+        normalize_harness_agent_config({"name": None})
+
+
 def test_config_forwards_set_values_except_caching_true_and_empty_description(tmp_path):
     builtin_tools = [
         "shell",

@@ -226,7 +226,11 @@ def _positive_number(value: object) -> object:
 NonBlankStr = _non_blank_str()
 _UNIQUE = AfterValidator(_unique)
 _UNSET: Any = None
-"""Unset marker for optional keys that must not be explicit null; dumps use ``exclude_unset``."""
+"""Plain ``None`` typed ``Any`` so non-nullable fields can default to it without a type error.
+
+Pydantic never validates defaults, and dumps use ``exclude_unset``, so an omitted key stays omitted while an
+explicit ``null`` is still rejected unless the field is typed ``| None``.
+"""
 
 
 class _Model(BaseModel):
