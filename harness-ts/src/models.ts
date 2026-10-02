@@ -60,6 +60,28 @@ const WEB_FETCH_MODELS: Record<string, string> = {
   google: 'gemini-3.5-flash',
 }
 
+/**
+ * Configurable provider endpoints shared with first-party clients.
+ *
+ * @internal
+ */
+export const PROVIDER_ENDPOINTS: Readonly<
+  Record<string, Readonly<{ baseUrlEnvironmentKey: string; defaultBaseUrl: string }>>
+> = {
+  anthropic: {
+    baseUrlEnvironmentKey: 'ANTHROPIC_BASE_URL',
+    defaultBaseUrl: 'https://api.anthropic.com',
+  },
+  openai: {
+    baseUrlEnvironmentKey: 'OPENAI_BASE_URL',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+  },
+  google: {
+    baseUrlEnvironmentKey: 'GOOGLE_GEMINI_BASE_URL',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+  },
+}
+
 // Cross-region inference profile prefixes stripped from a Bedrock model id before matching its
 // provider family. Kept byte-identical with `_BEDROCK_REGION_PREFIXES` in the Python `models.py`.
 const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.'] as const
@@ -301,16 +323,10 @@ function openAICompatibleBaseUrl(value: string): string {
   return value.replace(/\/+$/u, '').endsWith('/v1') ? value.replace(/\/+$/u, '') : `${value.replace(/\/+$/u, '')}/v1`
 }
 
-interface ProviderEndpoint {
-  baseUrlEnvironmentKey: string
-  defaultBaseUrl: string
-}
-
 interface Provider {
   build: (modelId: string, effort: string | null, webSearch: boolean, caching: boolean) => Promise<Model>
   recommended: string | null
   levels: readonly string[]
-  endpoint?: ProviderEndpoint
   // Native web search is enabled through model config on the providers whose SDK exposes a
   // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
   // `builtInTools`); `hasWebSearch` narrows bedrock-mantle to its GPT-5/GPT-6 models. Bedrock Converse has no
@@ -325,7 +341,7 @@ interface Provider {
   caching: boolean
 }
 
-const PROVIDERS: Readonly<Record<string, Provider>> = {
+const PROVIDERS: Record<string, Provider> = {
   bedrock: { build: bedrock, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
   'bedrock-mantle': {
     build: bedrockMantle,
@@ -334,52 +350,11 @@ const PROVIDERS: Readonly<Record<string, Provider>> = {
     webSearch: true,
     caching: true,
   },
-  anthropic: {
-    build: anthropic,
-    recommended: 'high',
-    levels: ANTHROPIC_LEVELS,
-    endpoint: {
-      baseUrlEnvironmentKey: 'ANTHROPIC_BASE_URL',
-      defaultBaseUrl: 'https://api.anthropic.com',
-    },
-    webSearch: false,
-    caching: true,
-  },
-  openai: {
-    build: openai,
-    recommended: 'high',
-    levels: OPENAI_LEVELS,
-    endpoint: {
-      baseUrlEnvironmentKey: 'OPENAI_BASE_URL',
-      defaultBaseUrl: 'https://api.openai.com/v1',
-    },
-    webSearch: true,
-    caching: true,
-  },
-  google: {
-    build: gemini,
-    recommended: 'high',
-    levels: GOOGLE_LEVELS,
-    endpoint: {
-      baseUrlEnvironmentKey: 'GOOGLE_GEMINI_BASE_URL',
-      defaultBaseUrl: 'https://generativelanguage.googleapis.com',
-    },
-    webSearch: true,
-    caching: true,
-  },
+  anthropic: { build: anthropic, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
+  openai: { build: openai, recommended: 'high', levels: OPENAI_LEVELS, webSearch: true, caching: true },
+  google: { build: gemini, recommended: 'high', levels: GOOGLE_LEVELS, webSearch: true, caching: true },
   ollama: { build: ollama, recommended: null, levels: NO_THINKING_LEVELS, webSearch: false, caching: false },
   litellm: { build: litellm, recommended: null, levels: NO_THINKING_LEVELS, webSearch: false, caching: true },
-}
-
-/**
- * Return endpoint metadata owned by the harness provider definition.
- *
- * @param providerName - Harness model-provider prefix.
- * @returns Endpoint metadata when the provider supports a configurable API base URL.
- * @internal
- */
-export function providerEndpoint(providerName: string): ProviderEndpoint | undefined {
-  return PROVIDERS[providerName]?.endpoint
 }
 
 /** Every value the `effort` option accepts, for validation of untyped (JSON / JS) callers. */
@@ -484,7 +459,7 @@ export async function resolveModel(
 
   if (caching && !provider.caching) {
     const supported = Object.keys(PROVIDERS)
-      .filter((providerName) => PROVIDERS[providerName]!.caching)
+      .filter((p) => PROVIDERS[p]!.caching)
       .join(', ')
     requireOrWarn(
       cachingExplicit,
@@ -633,7 +608,7 @@ export async function resolveWebFetchModel(
   }
   const main = mainModel ?? DEFAULT_MODEL
   const [providerName, name] = splitProvider(main)
-  const baseUrlEnvironmentKey = providerEndpoint(providerName)?.baseUrlEnvironmentKey
+  const baseUrlEnvironmentKey = PROVIDER_ENDPOINTS[providerName]?.baseUrlEnvironmentKey
   let small: string | undefined
   if (providerName === 'bedrock') {
     small = bedrockWebFetchModel(name)

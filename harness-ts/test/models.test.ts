@@ -3,7 +3,6 @@ import { Model, ModelRouter } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 import {
-  providerEndpoint,
   resolveModel,
   resolveWebFetchModel,
   supportsMedia,
@@ -838,23 +837,5 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
     process.env.ANTHROPIC_BASE_URL = 'https://example.invalid/anthropic'
     const model = await resolveWebFetchModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
     expect(model.getConfig().modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
-  })
-})
-
-describe('providerEndpoint', () => {
-  it('returns SDK-owned endpoint metadata', () => {
-    expect(providerEndpoint('anthropic')).toEqual({
-      baseUrlEnvironmentKey: 'ANTHROPIC_BASE_URL',
-      defaultBaseUrl: 'https://api.anthropic.com',
-    })
-    expect(providerEndpoint('openai')).toEqual({
-      baseUrlEnvironmentKey: 'OPENAI_BASE_URL',
-      defaultBaseUrl: 'https://api.openai.com/v1',
-    })
-    expect(providerEndpoint('google')).toEqual({
-      baseUrlEnvironmentKey: 'GOOGLE_GEMINI_BASE_URL',
-      defaultBaseUrl: 'https://generativelanguage.googleapis.com',
-    })
-    expect(providerEndpoint('bedrock')).toBeUndefined()
   })
 })

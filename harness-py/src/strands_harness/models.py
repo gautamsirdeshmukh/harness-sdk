@@ -67,6 +67,22 @@ _WEB_FETCH_MODELS = {
     "google": "gemini-3.5-flash",
 }
 
+# Configurable endpoint metadata, kept field-for-field with ``PROVIDER_ENDPOINTS`` in TypeScript.
+_PROVIDER_ENDPOINTS = {
+    "anthropic": {
+        "base_url_environment_key": "ANTHROPIC_BASE_URL",
+        "default_base_url": "https://api.anthropic.com",
+    },
+    "openai": {
+        "base_url_environment_key": "OPENAI_BASE_URL",
+        "default_base_url": "https://api.openai.com/v1",
+    },
+    "google": {
+        "base_url_environment_key": "GOOGLE_GEMINI_BASE_URL",
+        "default_base_url": "https://generativelanguage.googleapis.com",
+    },
+}
+
 # Cross-region inference profile prefixes stripped from a Bedrock model id before matching its
 # provider family. Kept byte-identical with ``models.ts``.
 _BEDROCK_REGION_PREFIXES = ("global.", "apac.", "us.", "eu.", "au.", "jp.")
@@ -287,40 +303,14 @@ class Provider(NamedTuple):
     thinking_levels: tuple[str, ...]
     web_search: bool
     caching: bool
-    base_url_environment_key: str | None = None
-    default_base_url: str | None = None
 
 
 _PROVIDERS = {
     "bedrock": Provider(_bedrock, "high", _ANTHROPIC_LEVELS, web_search=False, caching=True),
     "bedrock-mantle": Provider(_bedrock_mantle, "high", _OPENAI_LEVELS, web_search=True, caching=True),
-    "anthropic": Provider(
-        _anthropic,
-        "high",
-        _ANTHROPIC_LEVELS,
-        web_search=True,
-        caching=True,
-        base_url_environment_key="ANTHROPIC_BASE_URL",
-        default_base_url="https://api.anthropic.com",
-    ),
-    "openai": Provider(
-        _openai,
-        "high",
-        _OPENAI_LEVELS,
-        web_search=True,
-        caching=True,
-        base_url_environment_key="OPENAI_BASE_URL",
-        default_base_url="https://api.openai.com/v1",
-    ),
-    "google": Provider(
-        _gemini,
-        "high",
-        _GOOGLE_LEVELS,
-        web_search=True,
-        caching=True,
-        base_url_environment_key="GOOGLE_GEMINI_BASE_URL",
-        default_base_url="https://generativelanguage.googleapis.com",
-    ),
+    "anthropic": Provider(_anthropic, "high", _ANTHROPIC_LEVELS, web_search=True, caching=True),
+    "openai": Provider(_openai, "high", _OPENAI_LEVELS, web_search=True, caching=True),
+    "google": Provider(_gemini, "high", _GOOGLE_LEVELS, web_search=True, caching=True),
     "ollama": Provider(_ollama, None, (), web_search=False, caching=False),
     "litellm": Provider(_litellm, None, (), web_search=False, caching=True),
 }
@@ -550,8 +540,8 @@ def resolve_web_fetch_model(
         return main_model
     main = main_model if main_model is not None else defaults.DEFAULT_MODEL
     provider_name, name = _split_provider(main)
-    provider = _PROVIDERS.get(provider_name)
-    base_url_environment_key = provider.base_url_environment_key if provider else None
+    endpoint = _PROVIDER_ENDPOINTS.get(provider_name)
+    base_url_environment_key = endpoint["base_url_environment_key"] if endpoint else None
     if provider_name == "bedrock":
         small = _bedrock_web_fetch_model(name)
         if small is None:
