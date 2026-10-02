@@ -18,7 +18,6 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from strands.models import Model, ModelRouter
@@ -267,14 +266,6 @@ def _litellm(model_id: str, effort: str | None, web_search: bool, caching: bool)
     return LiteLLMModel(client_args=client_args, model_id=model_id)
 
 
-@dataclass(frozen=True)
-class _ProviderEndpoint:
-    """Configurable endpoint metadata for one model provider."""
-
-    base_url_environment_key: str
-    default_base_url: str
-
-
 class Provider(NamedTuple):
     """How one model provider is built and what reasoning/search/caching it supports.
 
@@ -296,7 +287,8 @@ class Provider(NamedTuple):
     thinking_levels: tuple[str, ...]
     web_search: bool
     caching: bool
-    endpoint: _ProviderEndpoint | None = None
+    base_url_environment_key: str | None = None
+    default_base_url: str | None = None
 
 
 _PROVIDERS = {
@@ -308,7 +300,8 @@ _PROVIDERS = {
         _ANTHROPIC_LEVELS,
         web_search=True,
         caching=True,
-        endpoint=_ProviderEndpoint("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+        base_url_environment_key="ANTHROPIC_BASE_URL",
+        default_base_url="https://api.anthropic.com",
     ),
     "openai": Provider(
         _openai,
@@ -316,7 +309,8 @@ _PROVIDERS = {
         _OPENAI_LEVELS,
         web_search=True,
         caching=True,
-        endpoint=_ProviderEndpoint("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        base_url_environment_key="OPENAI_BASE_URL",
+        default_base_url="https://api.openai.com/v1",
     ),
     "google": Provider(
         _gemini,
@@ -324,7 +318,8 @@ _PROVIDERS = {
         _GOOGLE_LEVELS,
         web_search=True,
         caching=True,
-        endpoint=_ProviderEndpoint("GOOGLE_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
+        base_url_environment_key="GOOGLE_GEMINI_BASE_URL",
+        default_base_url="https://generativelanguage.googleapis.com",
     ),
     "ollama": Provider(_ollama, None, (), web_search=False, caching=False),
     "litellm": Provider(_litellm, None, (), web_search=False, caching=True),
@@ -556,7 +551,7 @@ def resolve_web_fetch_model(
     main = main_model if main_model is not None else defaults.DEFAULT_MODEL
     provider_name, name = _split_provider(main)
     provider = _PROVIDERS.get(provider_name)
-    base_url_environment_key = provider.endpoint.base_url_environment_key if provider and provider.endpoint else None
+    base_url_environment_key = provider.base_url_environment_key if provider else None
     if provider_name == "bedrock":
         small = _bedrock_web_fetch_model(name)
         if small is None:

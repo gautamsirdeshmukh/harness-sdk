@@ -301,7 +301,7 @@ function openAICompatibleBaseUrl(value: string): string {
   return value.replace(/\/+$/u, '').endsWith('/v1') ? value.replace(/\/+$/u, '') : `${value.replace(/\/+$/u, '')}/v1`
 }
 
-interface ProviderEndpointConfig {
+interface ProviderEndpoint {
   baseUrlEnvironmentKey: string
   defaultBaseUrl: string
 }
@@ -310,7 +310,7 @@ interface Provider {
   build: (modelId: string, effort: string | null, webSearch: boolean, caching: boolean) => Promise<Model>
   recommended: string | null
   levels: readonly string[]
-  endpoint?: ProviderEndpointConfig
+  endpoint?: ProviderEndpoint
   // Native web search is enabled through model config on the providers whose SDK exposes a
   // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
   // `builtInTools`); `hasWebSearch` narrows bedrock-mantle to its GPT-5/GPT-6 models. Bedrock Converse has no
@@ -325,7 +325,7 @@ interface Provider {
   caching: boolean
 }
 
-const PROVIDERS = {
+const PROVIDERS: Readonly<Record<string, Provider>> = {
   bedrock: { build: bedrock, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
   'bedrock-mantle': {
     build: bedrockMantle,
@@ -369,17 +369,7 @@ const PROVIDERS = {
   },
   ollama: { build: ollama, recommended: null, levels: NO_THINKING_LEVELS, webSearch: false, caching: false },
   litellm: { build: litellm, recommended: null, levels: NO_THINKING_LEVELS, webSearch: false, caching: true },
-} as const satisfies Record<string, Provider>
-
-type ProviderDefinition = (typeof PROVIDERS)[keyof typeof PROVIDERS]
-const PROVIDER_INDEX: Readonly<Record<string, Provider>> = PROVIDERS
-
-/**
- * Endpoint metadata for a provider whose API base URL can be configured.
- *
- * @internal
- */
-export type ProviderEndpoint = Extract<ProviderDefinition, { endpoint: ProviderEndpointConfig }>['endpoint']
+}
 
 /**
  * Return endpoint metadata owned by the harness provider definition.
@@ -389,7 +379,7 @@ export type ProviderEndpoint = Extract<ProviderDefinition, { endpoint: ProviderE
  * @internal
  */
 export function providerEndpoint(providerName: string): ProviderEndpoint | undefined {
-  return PROVIDER_INDEX[providerName]?.endpoint as ProviderEndpoint | undefined
+  return PROVIDERS[providerName]?.endpoint
 }
 
 /** Every value the `effort` option accepts, for validation of untyped (JSON / JS) callers. */
@@ -481,7 +471,7 @@ export async function resolveModel(
 
   const [providerName, name] = splitProvider(spec)
 
-  const provider = PROVIDER_INDEX[providerName]
+  const provider = PROVIDERS[providerName]
   if (provider === undefined) {
     const supported = Object.keys(PROVIDERS).sort().join(', ')
     throw new Error(
@@ -494,7 +484,7 @@ export async function resolveModel(
 
   if (caching && !provider.caching) {
     const supported = Object.keys(PROVIDERS)
-      .filter((providerName) => PROVIDER_INDEX[providerName]!.caching)
+      .filter((providerName) => PROVIDERS[providerName]!.caching)
       .join(', ')
     requireOrWarn(
       cachingExplicit,
@@ -574,7 +564,7 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
   if (providerName === 'anthropic') {
     return claudeThinkingMode(name) !== null
   }
-  return (PROVIDER_INDEX[providerName]?.levels.length ?? 0) > 0
+  return (PROVIDERS[providerName]?.levels.length ?? 0) > 0
 }
 
 /**
@@ -595,7 +585,7 @@ export function supportsWebSearch(model: Model | ModelRouter | string | undefine
 }
 
 function hasWebSearch(providerName: string, name: string): boolean {
-  const provider = PROVIDER_INDEX[providerName]
+  const provider = PROVIDERS[providerName]
   if (provider === undefined || !provider.webSearch) {
     return false
   }
