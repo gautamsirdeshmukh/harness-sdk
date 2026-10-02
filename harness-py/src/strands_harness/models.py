@@ -18,6 +18,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from strands.models import Model, ModelRouter
@@ -69,10 +70,6 @@ _WEB_FETCH_MODELS = {
 
 # Cross-region inference profile prefixes stripped from a Bedrock model id before matching its
 # provider family. Kept byte-identical with ``models.ts``.
-# Providers whose endpoint can be repointed by an env var. A non-default endpoint publishes its
-# own model list, so the vended small summarizer is not guaranteed to exist on it.
-_CUSTOM_ENDPOINT_VARS = {"anthropic": "ANTHROPIC_BASE_URL", "openai": "OPENAI_BASE_URL"}
-
 _BEDROCK_REGION_PREFIXES = ("global.", "apac.", "us.", "eu.", "au.", "jp.")
 
 
@@ -270,6 +267,14 @@ def _litellm(model_id: str, effort: str | None, web_search: bool, caching: bool)
     return LiteLLMModel(client_args=client_args, model_id=model_id)
 
 
+@dataclass(frozen=True)
+class _ProviderEndpoint:
+    """Configurable endpoint metadata for one model provider."""
+
+    base_url_environment_key: str
+    default_base_url: str
+
+
 class Provider(NamedTuple):
     """How one model provider is built and what reasoning/search/caching it supports.
 
@@ -291,14 +296,36 @@ class Provider(NamedTuple):
     thinking_levels: tuple[str, ...]
     web_search: bool
     caching: bool
+    endpoint: _ProviderEndpoint | None = None
 
 
 _PROVIDERS = {
     "bedrock": Provider(_bedrock, "high", _ANTHROPIC_LEVELS, web_search=False, caching=True),
     "bedrock-mantle": Provider(_bedrock_mantle, "high", _OPENAI_LEVELS, web_search=True, caching=True),
-    "anthropic": Provider(_anthropic, "high", _ANTHROPIC_LEVELS, web_search=True, caching=True),
-    "openai": Provider(_openai, "high", _OPENAI_LEVELS, web_search=True, caching=True),
-    "google": Provider(_gemini, "high", _GOOGLE_LEVELS, web_search=True, caching=True),
+    "anthropic": Provider(
+        _anthropic,
+        "high",
+        _ANTHROPIC_LEVELS,
+        web_search=True,
+        caching=True,
+        endpoint=_ProviderEndpoint("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+    ),
+    "openai": Provider(
+        _openai,
+        "high",
+        _OPENAI_LEVELS,
+        web_search=True,
+        caching=True,
+        endpoint=_ProviderEndpoint("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+    ),
+    "google": Provider(
+        _gemini,
+        "high",
+        _GOOGLE_LEVELS,
+        web_search=True,
+        caching=True,
+        endpoint=_ProviderEndpoint("GOOGLE_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
+    ),
     "ollama": Provider(_ollama, None, (), web_search=False, caching=False),
     "litellm": Provider(_litellm, None, (), web_search=False, caching=True),
 }
@@ -528,6 +555,8 @@ def resolve_web_fetch_model(
         return main_model
     main = main_model if main_model is not None else defaults.DEFAULT_MODEL
     provider_name, name = _split_provider(main)
+    provider = _PROVIDERS.get(provider_name)
+    base_url_environment_key = provider.endpoint.base_url_environment_key if provider and provider.endpoint else None
     if provider_name == "bedrock":
         small = _bedrock_web_fetch_model(name)
         if small is None:
@@ -537,9 +566,9 @@ def resolve_web_fetch_model(
                 "smaller one."
             )
             return _concrete_model(resolve_model(main, main, effort="off"))
-    elif (base_url_var := _CUSTOM_ENDPOINT_VARS.get(provider_name)) and os.environ.get(base_url_var):
+    elif base_url_environment_key and os.environ.get(base_url_environment_key):
         logger.warning(
-            f"model=<{main}> | {base_url_var} points provider <{provider_name}> at a non-default "
+            f"model=<{main}> | {base_url_environment_key} points provider <{provider_name}> at a non-default "
             "endpoint, which serves its own model list, so the vended summarizer may not exist "
             "there; reusing the main model. Pass web_fetch_model to choose a smaller one."
         )

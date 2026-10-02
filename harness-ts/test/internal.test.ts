@@ -7,6 +7,7 @@ describe('@strands-agents/harness/internal', () => {
   it('exposes the plumbing the CLI consumes', () => {
     for (const name of [
       'normalizeHarnessAgentConfig',
+      'providerEndpoint',
       'resolveModel',
       'resolveMemory',
       'resolveInterventions',
@@ -21,6 +22,7 @@ describe('@strands-agents/harness/internal', () => {
   it('keeps that plumbing off the root surface', () => {
     for (const name of [
       'resolveModel',
+      'providerEndpoint',
       'resolveMemory',
       'resolveInterventions',
       'resolveBuiltinTools',

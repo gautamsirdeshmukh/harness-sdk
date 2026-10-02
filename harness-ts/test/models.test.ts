@@ -3,6 +3,7 @@ import { Model, ModelRouter } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 import {
+  providerEndpoint,
   resolveModel,
   resolveWebFetchModel,
   supportsMedia,
@@ -807,6 +808,7 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
   afterEach(() => {
     delete process.env.ANTHROPIC_BASE_URL
     delete process.env.OPENAI_BASE_URL
+    delete process.env.GOOGLE_GEMINI_BASE_URL
   })
 
   it('reuses the main model when ANTHROPIC_BASE_URL is set', async () => {
@@ -821,6 +823,12 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
     expect(model.getConfig().modelId).toBe('gpt-oss-20b')
   })
 
+  it('reuses the main model when GOOGLE_GEMINI_BASE_URL is set', async () => {
+    process.env.GOOGLE_GEMINI_BASE_URL = 'https://proxy.example'
+    const model = await resolveWebFetchModel('google/gemini-3.5-pro', undefined)
+    expect(model.getConfig().modelId).toBe('gemini-3.5-pro')
+  })
+
   it('still uses the small model on the first-party endpoint', async () => {
     const model = await resolveWebFetchModel('anthropic/claude-opus-4-5-20251101', undefined)
     expect(model.getConfig().modelId).toBe('claude-haiku-4-5-20251001')
@@ -830,5 +838,23 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
     process.env.ANTHROPIC_BASE_URL = 'https://example.invalid/anthropic'
     const model = await resolveWebFetchModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
     expect(model.getConfig().modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
+  })
+})
+
+describe('providerEndpoint', () => {
+  it('returns SDK-owned endpoint metadata', () => {
+    expect(providerEndpoint('anthropic')).toEqual({
+      baseUrlEnvironmentKey: 'ANTHROPIC_BASE_URL',
+      defaultBaseUrl: 'https://api.anthropic.com',
+    })
+    expect(providerEndpoint('openai')).toEqual({
+      baseUrlEnvironmentKey: 'OPENAI_BASE_URL',
+      defaultBaseUrl: 'https://api.openai.com/v1',
+    })
+    expect(providerEndpoint('google')).toEqual({
+      baseUrlEnvironmentKey: 'GOOGLE_GEMINI_BASE_URL',
+      defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+    })
+    expect(providerEndpoint('bedrock')).toBeUndefined()
   })
 })

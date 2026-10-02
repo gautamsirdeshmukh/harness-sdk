@@ -62,13 +62,6 @@ const WEB_FETCH_MODELS: Record<string, string> = {
 
 // Cross-region inference profile prefixes stripped from a Bedrock model id before matching its
 // provider family. Kept byte-identical with `_BEDROCK_REGION_PREFIXES` in the Python `models.py`.
-// Providers whose endpoint can be repointed by an env var. A non-default endpoint publishes its
-// own model list, so the vended small summarizer is not guaranteed to exist on it.
-const CUSTOM_ENDPOINT_VARS: Record<string, string | undefined> = {
-  anthropic: 'ANTHROPIC_BASE_URL',
-  openai: 'OPENAI_BASE_URL',
-}
-
 const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.'] as const
 
 // Reasoning levels each provider's API accepts. `'off'` is the harness's spelling of a provider's
@@ -308,10 +301,16 @@ function openAICompatibleBaseUrl(value: string): string {
   return value.replace(/\/+$/u, '').endsWith('/v1') ? value.replace(/\/+$/u, '') : `${value.replace(/\/+$/u, '')}/v1`
 }
 
+interface ProviderEndpointConfig {
+  baseUrlEnvironmentKey: string
+  defaultBaseUrl: string
+}
+
 interface Provider {
   build: (modelId: string, effort: string | null, webSearch: boolean, caching: boolean) => Promise<Model>
   recommended: string | null
   levels: readonly string[]
+  endpoint?: ProviderEndpointConfig
   // Native web search is enabled through model config on the providers whose SDK exposes a
   // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
   // `builtInTools`); `hasWebSearch` narrows bedrock-mantle to its GPT-5/GPT-6 models. Bedrock Converse has no
@@ -326,7 +325,7 @@ interface Provider {
   caching: boolean
 }
 
-const PROVIDERS: Record<string, Provider> = {
+const PROVIDERS = {
   bedrock: { build: bedrock, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
   'bedrock-mantle': {
     build: bedrockMantle,
@@ -335,11 +334,62 @@ const PROVIDERS: Record<string, Provider> = {
     webSearch: true,
     caching: true,
   },
-  anthropic: { build: anthropic, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
-  openai: { build: openai, recommended: 'high', levels: OPENAI_LEVELS, webSearch: true, caching: true },
-  google: { build: gemini, recommended: 'high', levels: GOOGLE_LEVELS, webSearch: true, caching: true },
+  anthropic: {
+    build: anthropic,
+    recommended: 'high',
+    levels: ANTHROPIC_LEVELS,
+    endpoint: {
+      baseUrlEnvironmentKey: 'ANTHROPIC_BASE_URL',
+      defaultBaseUrl: 'https://api.anthropic.com',
+    },
+    webSearch: false,
+    caching: true,
+  },
+  openai: {
+    build: openai,
+    recommended: 'high',
+    levels: OPENAI_LEVELS,
+    endpoint: {
+      baseUrlEnvironmentKey: 'OPENAI_BASE_URL',
+      defaultBaseUrl: 'https://api.openai.com/v1',
+    },
+    webSearch: true,
+    caching: true,
+  },
+  google: {
+    build: gemini,
+    recommended: 'high',
+    levels: GOOGLE_LEVELS,
+    endpoint: {
+      baseUrlEnvironmentKey: 'GOOGLE_GEMINI_BASE_URL',
+      defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+    },
+    webSearch: true,
+    caching: true,
+  },
   ollama: { build: ollama, recommended: null, levels: NO_THINKING_LEVELS, webSearch: false, caching: false },
   litellm: { build: litellm, recommended: null, levels: NO_THINKING_LEVELS, webSearch: false, caching: true },
+} as const satisfies Record<string, Provider>
+
+type ProviderDefinition = (typeof PROVIDERS)[keyof typeof PROVIDERS]
+const PROVIDER_INDEX: Readonly<Record<string, Provider>> = PROVIDERS
+
+/**
+ * Endpoint metadata for a provider whose API base URL can be configured.
+ *
+ * @internal
+ */
+export type ProviderEndpoint = Extract<ProviderDefinition, { endpoint: ProviderEndpointConfig }>['endpoint']
+
+/**
+ * Return endpoint metadata owned by the harness provider definition.
+ *
+ * @param providerName - Harness model-provider prefix.
+ * @returns Endpoint metadata when the provider supports a configurable API base URL.
+ * @internal
+ */
+export function providerEndpoint(providerName: string): ProviderEndpoint | undefined {
+  return PROVIDER_INDEX[providerName]?.endpoint as ProviderEndpoint | undefined
 }
 
 /** Every value the `effort` option accepts, for validation of untyped (JSON / JS) callers. */
@@ -431,7 +481,7 @@ export async function resolveModel(
 
   const [providerName, name] = splitProvider(spec)
 
-  const provider = PROVIDERS[providerName]
+  const provider = PROVIDER_INDEX[providerName]
   if (provider === undefined) {
     const supported = Object.keys(PROVIDERS).sort().join(', ')
     throw new Error(
@@ -444,7 +494,7 @@ export async function resolveModel(
 
   if (caching && !provider.caching) {
     const supported = Object.keys(PROVIDERS)
-      .filter((p) => PROVIDERS[p]!.caching)
+      .filter((providerName) => PROVIDER_INDEX[providerName]!.caching)
       .join(', ')
     requireOrWarn(
       cachingExplicit,
@@ -524,7 +574,7 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
   if (providerName === 'anthropic') {
     return claudeThinkingMode(name) !== null
   }
-  return (PROVIDERS[providerName]?.levels.length ?? 0) > 0
+  return (PROVIDER_INDEX[providerName]?.levels.length ?? 0) > 0
 }
 
 /**
@@ -545,7 +595,7 @@ export function supportsWebSearch(model: Model | ModelRouter | string | undefine
 }
 
 function hasWebSearch(providerName: string, name: string): boolean {
-  const provider = PROVIDERS[providerName]
+  const provider = PROVIDER_INDEX[providerName]
   if (provider === undefined || !provider.webSearch) {
     return false
   }
@@ -593,6 +643,7 @@ export async function resolveWebFetchModel(
   }
   const main = mainModel ?? DEFAULT_MODEL
   const [providerName, name] = splitProvider(main)
+  const baseUrlEnvironmentKey = providerEndpoint(providerName)?.baseUrlEnvironmentKey
   let small: string | undefined
   if (providerName === 'bedrock') {
     small = bedrockWebFetchModel(name)
@@ -603,10 +654,9 @@ export async function resolveWebFetchModel(
       )
       return concreteModel(await resolveModel(main, main, 'off'))
     }
-  } else if (CUSTOM_ENDPOINT_VARS[providerName] && process.env[CUSTOM_ENDPOINT_VARS[providerName]!]) {
-    const baseUrlVar = CUSTOM_ENDPOINT_VARS[providerName]!
+  } else if (baseUrlEnvironmentKey && process.env[baseUrlEnvironmentKey]) {
     warnOnce(
-      `model=<${main}> | ${baseUrlVar} points provider <${providerName}> at a non-default endpoint, ` +
+      `model=<${main}> | ${baseUrlEnvironmentKey} points provider <${providerName}> at a non-default endpoint, ` +
         'which serves its own model list, so the vended summarizer may not exist there; reusing the ' +
         'main model. Pass builtinTools.web_fetch.model to choose a smaller one.'
     )
