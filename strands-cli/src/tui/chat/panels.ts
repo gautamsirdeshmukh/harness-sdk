@@ -111,11 +111,6 @@ export function formatTaskActivity(task: ChatTask): string {
   return lines.join('\n')
 }
 
-export function clonePanel(panel: ChatPanel): ChatPanel {
-  const { id, ...panelWithoutId } = panel
-  return makePanel(id, panelWithoutId)
-}
-
 function formatDate(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toISOString().replace('T', ' ').slice(0, 16)
@@ -242,7 +237,19 @@ export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
   }
   switch (panel.kind) {
     case 'effort':
-      return { ...common, kind: panel.kind, slider: sanitizeSlider(panel.slider) }
+      return {
+        ...common,
+        kind: panel.kind,
+        slider: {
+          label: sanitizeTerminalText(panel.slider.label),
+          options: panel.slider.options.map((option) => ({
+            id: sanitizeTerminalText(option.id),
+            label: sanitizeTerminalText(option.label),
+            ...(option.active ? { active: true } : {}),
+          })),
+          ...(panel.slider.disabled ? { disabled: true } : {}),
+        },
+      }
     case 'permission':
       return {
         ...common,
@@ -265,18 +272,6 @@ export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
       }
     default:
       return { ...common, kind: panel.kind }
-  }
-}
-
-function sanitizeSlider(slider: ChatPanelSlider): ChatPanelSlider {
-  return {
-    label: sanitizeTerminalText(slider.label),
-    options: slider.options.map((option) => ({
-      id: sanitizeTerminalText(option.id),
-      label: sanitizeTerminalText(option.label),
-      ...(option.active ? { active: true } : {}),
-    })),
-    ...(slider.disabled ? { disabled: true } : {}),
   }
 }
 

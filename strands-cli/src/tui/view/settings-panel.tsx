@@ -2,10 +2,10 @@ import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
 import type { ChatPanelRow } from '../chat/controller.js'
-import type { ChatSettings, FrogTheme } from '../chat/types.js'
+import type { FrogTheme, ThemeSettings } from '../chat/types.js'
 import { DEFAULT_CHAT_SETTINGS } from '../settings.js'
 import { panelControlTarget, settingsLayout, settingsThemeLayout } from './interaction.js'
-import { PanelContainer, PanelItemHeader, PanelTitle, type PanelRowsProps } from './panel-components.js'
+import { PanelItemHeader, PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
 import { Box, getTheme, Text, useTheme, type Theme } from './theme.js'
 
 export function SettingsPanel({
@@ -32,7 +32,7 @@ export function SettingsPanel({
   hoveredControl?: string
   pressedFilter?: string
   hoveredFilter?: string
-  appearance?: Pick<ChatSettings, 'frogTheme' | 'customTheme'>
+  appearance?: ThemeSettings
   embedded?: boolean
   height?: number
   onControlElement?: (key: string, element: DOMElement | null) => void
@@ -237,9 +237,9 @@ export function SettingsPanel({
   return embedded ? (
     content
   ) : (
-    <PanelContainer width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+    <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
       {content}
-    </PanelContainer>
+    </PanelOverlay>
   )
 }
 
@@ -262,7 +262,7 @@ export function SettingsControl({
   control: NonNullable<ChatPanelRow['control']>
   rowIndex: number
   setting?: string
-  appearance?: Pick<ChatSettings, 'frogTheme' | 'customTheme'>
+  appearance?: ThemeSettings
   spacious?: boolean
   columns?: number
   optionWidth?: number
@@ -387,7 +387,7 @@ function ThemeChoices({
   optionWidth: number
   optionHeight?: number
   maxRows?: number
-  appearance?: Pick<ChatSettings, 'frogTheme' | 'customTheme'>
+  appearance?: ThemeSettings
   pressedControl?: string
   hoveredControl?: string
   onControlElement?: (key: string, element: DOMElement | null) => void

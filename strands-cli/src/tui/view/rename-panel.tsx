@@ -3,7 +3,7 @@ import type { DOMElement } from 'ink'
 
 import type { ChatPanel } from '../chat/types.js'
 import { graphemes } from '../terminal/composer.js'
-import { PanelContainer, PanelTitle } from './panel-components.js'
+import { PanelOverlay, PanelTitle } from './panel-components.js'
 import { EditableText } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
 
@@ -23,7 +23,7 @@ export function RenamePanel({
   const { accent, surface } = useTheme()
   const currentName = panel.rows[0]?.description
   return (
-    <PanelContainer width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+    <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
       <Box paddingX={1} flexDirection="column">
         <PanelTitle title={panel.title} color={accent} />
         {currentName ? (
@@ -45,6 +45,6 @@ export function RenamePanel({
           />
         </Box>
       </Box>
-    </PanelContainer>
+    </PanelOverlay>
   )
 }

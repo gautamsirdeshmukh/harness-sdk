@@ -126,8 +126,7 @@ function promptPlaceholder(width: number): string {
 
 // Matches PromptSurface's border and horizontal padding.
 export function promptContentSize(width: number, height: number, outlined: boolean): { width: number; height: number } {
-  const horizontalInset = outlined ? 4 : 0
-  return { width: Math.max(1, width - horizontalInset), height: Math.max(1, height - (outlined ? 2 : 0)) }
+  return { width: Math.max(1, width - (outlined ? 4 : 0)), height: Math.max(1, height - (outlined ? 2 : 0)) }
 }
 
 function PromptSurface({

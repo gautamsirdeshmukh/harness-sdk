@@ -2,7 +2,6 @@ import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 
 import {
-  clonePanel,
   effortSlider,
   permissionRequestRows,
   formatPermissionPanelBody,
@@ -926,7 +925,7 @@ export class ChatController implements ChatControllerApi {
       context: { ...this._context },
       status: this._closed ? 'closed' : activeTurn ? 'running' : this._drainingProjector ? 'interrupting' : 'idle',
       ...(this._composerStatus ? { composerStatus: this._composerStatus } : {}),
-      ...(this._panel ? { panel: clonePanel(this._panel) } : {}),
+      ...(this._panel ? { panel: makePanel(this._panel.id, this._panel) } : {}),
       runtime: cloneRuntime(this._runtime),
       settings: globalThis.structuredClone(this._settings),
       ...(this._exitCode !== undefined ? { exitCode: this._exitCode } : {}),

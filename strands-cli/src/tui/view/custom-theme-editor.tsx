@@ -1,16 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useInput, type DOMElement } from 'ink'
 
-import { FROG_THEMES, FROG_THEME_LABELS, type ChatSettings } from '../chat/types.js'
+import { CUSTOM_THEME_COLOR_KEYS, FROG_THEMES, FROG_THEME_LABELS, type ThemeSettings } from '../chat/types.js'
 import { parseMouseInput } from '../terminal/mouse-input.js'
 import { elementAtMouse, registerElement } from './interaction.js'
-import { Box, getTheme, Text, ThemeProvider } from './theme.js'
+import { Box, getTheme, Text, ThemeProvider, useTheme } from './theme.js'
 import { FadeIn } from './fade-in.js'
 
-export type Appearance = Pick<ChatSettings, 'frogTheme' | 'customTheme'>
-
-type ColorKey = 'accent' | 'frog'
-const EDITABLE_COLOR_KEYS = ['accent', 'frog'] as const
+type ColorKey = (typeof CUSTOM_THEME_COLOR_KEYS)[number]
 type Focus = 'base' | 'role' | 'neutrals' | 'palette' | 'reset-color' | 'reset-colors' | 'apply' | 'cancel'
 type Target =
   | 'base:previous'
@@ -47,16 +44,16 @@ export function CustomThemeEditor({
   onApply,
   onClose,
 }: {
-  settings: Appearance
+  settings: ThemeSettings
   animate?: boolean
   width: number
   height: number
-  onPreview(settings: Appearance): void
-  onApply(settings: Appearance): Promise<void> | void
+  onPreview(settings: ThemeSettings): void
+  onApply(settings: ThemeSettings): Promise<void> | void
   onClose(): void
 }): ReactElement {
   const [draft, setDraft] = useState(() => globalThis.structuredClone(settings))
-  const [roleIndex, setRoleIndex] = useState(() => EDITABLE_COLOR_KEYS.indexOf('accent'))
+  const [roleIndex, setRoleIndex] = useState(() => CUSTOM_THEME_COLOR_KEYS.indexOf('accent'))
   const [focus, setFocus] = useState<Focus>('palette')
   const [neutralIndex, setNeutralIndex] = useState(0)
   const [colorIndex, setColorIndex] = useState(0)
@@ -80,10 +77,10 @@ export function CustomThemeEditor({
     [paletteColumns, paletteRowCount]
   )
   const presets = FROG_THEMES.filter((theme) => theme !== 'custom')
-  const selectedRole = EDITABLE_COLOR_KEYS[roleIndex]!
+  const selectedRole = CUSTOM_THEME_COLOR_KEYS[roleIndex]!
   const visibleSettings = { ...draft, frogTheme: 'custom' as const }
-  const colors = getTheme(visibleSettings)
-  const mode = colors.mode
+  const mode = useTheme().mode
+  const colors = getTheme(visibleSettings, mode)
   const selectedColor = colors[selectedRole]
   const customized = draft.customTheme[mode][selectedRole] !== undefined
 
@@ -103,7 +100,7 @@ export function CustomThemeEditor({
   }
 
   function changeRole(direction: -1 | 1): void {
-    setRoleIndex((current) => (current + direction + EDITABLE_COLOR_KEYS.length) % EDITABLE_COLOR_KEYS.length)
+    setRoleIndex((current) => (current + direction + CUSTOM_THEME_COLOR_KEYS.length) % CUSTOM_THEME_COLOR_KEYS.length)
   }
 
   function setRoleColor(color: string): void {
@@ -127,7 +124,11 @@ export function CustomThemeEditor({
   }
 
   function resetColors(): void {
-    setDraft((value) => ({ ...value, customTheme: { ...value.customTheme, [mode]: {} } }))
+    setDraft((value) => {
+      const variant = { ...value.customTheme[mode] }
+      for (const key of CUSTOM_THEME_COLOR_KEYS) delete variant[key]
+      return { ...value, customTheme: { ...value.customTheme, [mode]: variant } }
+    })
     setError(undefined)
   }
 
@@ -372,7 +373,7 @@ export function CustomThemeEditor({
                 <Box width={3} backgroundColor={selectedColor} />
                 <Text dimColor>
                   {' '}
-                  {selectedColor} · {roleIndex + 1}/{EDITABLE_COLOR_KEYS.length}
+                  {selectedColor} · {roleIndex + 1}/{CUSTOM_THEME_COLOR_KEYS.length}
                 </Text>
               </Box>
             ) : null}

@@ -28,7 +28,7 @@ export function ModelPicker({
   onRowElement,
   onFilterElement,
   onSearchElement,
-}: Omit<PanelRowsProps, 'panel'> & {
+}: Omit<PanelRowsProps, 'panel' | 'onPanelElement'> & {
   panel: ChatModelPanel
   allRows: readonly ChatPanelRow[]
   height: number
@@ -52,23 +52,23 @@ export function ModelPicker({
     )
   }
   const filters = panel.filters ?? []
-  const providerWidth = Math.max(1, Math.floor(width / 3))
   const emptyMessage = query.trim()
     ? 'No matching models'
     : filter === 'all' || filter === 'current'
       ? 'No models available'
       : 'No models available. Configure this provider with /setup.'
-  const filterProps = {
-    filters,
-    filter,
-    focused: focus === 'providers',
-    ...(pressedFilter ? { pressed: pressedFilter } : {}),
-    ...(hoveredFilter ? { hovered: hoveredFilter } : {}),
-    ...(onFilterElement ? { onElement: onFilterElement } : {}),
-  }
   return (
     <Box flexGrow={1} height={height} overflow="hidden">
-      <ProviderColumn {...filterProps} width={providerWidth} height={height} />
+      <ProviderColumn
+        filters={filters}
+        filter={filter}
+        focused={focus === 'providers'}
+        width={Math.max(1, Math.floor(width / 3))}
+        height={height}
+        {...(pressedFilter ? { pressed: pressedFilter } : {})}
+        {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
+        {...(onFilterElement ? { onElement: onFilterElement } : {})}
+      />
       <Box
         flexGrow={1}
         flexDirection="column"
@@ -111,20 +111,20 @@ export function ModelPicker({
   )
 }
 
-interface ProviderFilterProps {
+function ProviderColumn({
+  width,
+  height,
+  ...props
+}: {
+  width: number
+  height: number
   filters: readonly ChatPanelFilter[]
   filter: string
   focused: boolean
   pressed?: string
   hovered?: string
   onElement?: (id: string, element: DOMElement | null) => void
-}
-
-function ProviderColumn({
-  width,
-  height,
-  ...props
-}: ProviderFilterProps & { width: number; height: number }): ReactElement {
+}): ReactElement {
   const { accent } = useTheme()
   const capacity = Math.max(1, height - 3)
   const index = Math.max(

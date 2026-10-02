@@ -11,16 +11,15 @@ import { Box as InkBox, Text as InkText } from 'ink'
 
 import {
   DEFAULT_CHAT_SETTINGS,
-  type ChatSettings,
   type FrogTheme,
   type ResolvedColorMode,
+  type ThemeSettings,
   type ThemeColors,
 } from '../chat/types.js'
 import { currentColorMode, subscribeColorMode } from './theme-detection.js'
 import { useFadeAnsi, useFadeColor } from './fade-in.js'
 
 export type Theme = ThemeColors & { mode: ResolvedColorMode }
-type ThemeSettings = Pick<ChatSettings, 'frogTheme' | 'customTheme'>
 
 const BASE_COLORS = {
   dark: {
@@ -76,11 +75,13 @@ const FROG_COLORS = {
 export function getTheme(settings: ThemeSettings, detectedMode?: ResolvedColorMode): Theme {
   const mode = detectedMode ?? currentColorMode()
   const base = settings.frogTheme === 'custom' ? settings.customTheme.base : settings.frogTheme
+  const custom = settings.frogTheme === 'custom' ? settings.customTheme[mode] : undefined
   return {
     ...BASE_COLORS[mode],
     accent: ACCENTS[base][mode],
     frog: FROG_COLORS[base][mode],
-    ...(settings.frogTheme === 'custom' ? settings.customTheme[mode] : {}),
+    ...(custom?.accent ? { accent: custom.accent } : {}),
+    ...(custom?.frog ? { frog: custom.frog } : {}),
     mode,
   }
 }

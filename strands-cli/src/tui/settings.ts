@@ -66,13 +66,12 @@ export const THEME_COLOR_KEYS = [
   'frog',
 ] as const
 
-const CUSTOM_THEME_COLOR_KEYS = ['accent', 'frog'] as const
-type CustomThemeColors = Partial<Pick<ThemeColors, (typeof CUSTOM_THEME_COLOR_KEYS)[number]>>
+export const CUSTOM_THEME_COLOR_KEYS = ['accent', 'frog'] as const
 
 export interface CustomTheme {
   base: Exclude<FrogTheme, 'custom'>
-  light: CustomThemeColors
-  dark: CustomThemeColors
+  light: Partial<ThemeColors>
+  dark: Partial<ThemeColors>
 }
 
 export interface ChatSettings {
@@ -91,6 +90,8 @@ export interface ChatSettings {
   /** Send one anonymous usage ping per interactive start (see README → Telemetry). */
   telemetry: boolean
 }
+
+export type ThemeSettings = Pick<ChatSettings, 'frogTheme' | 'customTheme'>
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   transcriptSpacing: 'comfortable',
@@ -307,13 +308,13 @@ function parseCustomTheme(value: unknown, path: string): CustomTheme {
   ) {
     throw new Error(`Invalid CLI config at ${path}: customTheme.base must name a preset theme`)
   }
-  const colors = (mode: ResolvedColorMode): CustomThemeColors => {
+  const colors = (mode: ResolvedColorMode): Partial<ThemeColors> => {
     const candidate = value[mode] ?? {}
     if (!isRecord(candidate)) {
       throw new Error(`Invalid CLI config at ${path}: customTheme.${mode} must be an object`)
     }
-    const result: CustomThemeColors = {}
-    for (const key of CUSTOM_THEME_COLOR_KEYS) {
+    const result: Partial<ThemeColors> = {}
+    for (const key of THEME_COLOR_KEYS) {
       const color = candidate[key]
       if (color === undefined) continue
       if (typeof color !== 'string' || !/^#[\da-f]{6}$/iu.test(color)) {
@@ -353,7 +354,7 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
           !isRecord(colors) ||
           Object.entries(colors).some(
             ([key, color]) =>
-              !CUSTOM_THEME_COLOR_KEYS.includes(key as (typeof CUSTOM_THEME_COLOR_KEYS)[number]) ||
+              !THEME_COLOR_KEYS.includes(key as (typeof THEME_COLOR_KEYS)[number]) ||
               typeof color !== 'string' ||
               !/^#[\da-f]{6}$/iu.test(color)
           )

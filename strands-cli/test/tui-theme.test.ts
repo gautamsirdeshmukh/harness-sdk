@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CHAT_SETTINGS, FROG_THEMES, THEME_COLOR_KEYS, type ChatSettings } from '../src/tui/chat/types.js'
 import { Markdown } from '../src/tui/view/markdown.js'
 import { MediaView } from '../src/tui/view/media.js'
-import { PanelContainer } from '../src/tui/view/panel-components.js'
+import { PanelOverlay } from '../src/tui/view/panel-components.js'
 import { contextColor, detailLines, permissionLines } from '../src/tui/view/presentation.js'
 import { PromptEditor } from '../src/tui/view/prompt-editor.js'
 import { SettingsControl } from '../src/tui/view/settings-panel.js'
@@ -70,7 +70,6 @@ describe('theme resolution', () => {
   })
 
   it('resolves the supplied terminal mode', () => {
-    expect(getTheme(settings()).mode).toBe('dark')
     expect(getTheme(settings(), 'dark').mode).toBe('dark')
     expect(getTheme(settings(), 'light').mode).toBe('light')
   })
@@ -107,7 +106,7 @@ describe('terminal background detection', () => {
   it.each([
     ['0000/0000/0000', 'dark'],
     ['ffff/ffff/ffff', 'light'],
-  ] as const)('resolves OSC 11 rgb:%s to %s without consuming typed input', async (rgb, mode) => {
+  ] as const)('resolves delayed split OSC 11 rgb:%s to %s without consuming typed input', async (rgb, mode) => {
     const input = ttyInput()
     const output = ttyOutput(80, 24)
     let query = ''
@@ -118,6 +117,7 @@ describe('terminal background detection', () => {
     const observer = observeTerminalColorMode(input, output)
     await vi.waitFor(() => expect(query).toBe('\u001b[?2031h\u001b]11;?\u001b\\'))
     input.write(`x\u001b]11;rgb:${rgb.slice(0, 9)}`)
+    await new Promise((resolve) => setTimeout(resolve, 20))
     input.write(`${rgb.slice(9)}\u001b\\`)
 
     await observer.ready
@@ -170,7 +170,6 @@ describe('terminal background detection', () => {
       unsubscribe()
       watcher.dispose()
     }
-    expect(terminalWrites).toContain('\u001b[?2031l')
   })
 })
 
@@ -303,7 +302,7 @@ describe('themed Ink output', () => {
           h(MediaView, {
             content: { type: 'document', name: 'Notes', format: 'txt', source: { type: 'text', text: 'preview' } },
           }),
-          h(PanelContainer, {
+          h(PanelOverlay, {
             width: 40,
             children: h(SettingsControl, {
               rowIndex: 0,

@@ -31,7 +31,8 @@ import { ExportPanel } from './export-panel.js'
 import { ModelPicker } from './model-panel.js'
 import { RenamePanel } from './rename-panel.js'
 import { SessionsPanel } from './sessions-panel.js'
-import { PanelContainer, PanelItemHeader, PanelTitle } from './panel-components.js'
+import { PanelItemHeader, PanelOverlay, PanelTitle } from './panel-components.js'
+import { PanelHelpFooter } from './help-footer.js'
 import { SettingsControl, SettingsPanel } from './settings-panel.js'
 import { BlinkingCursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
@@ -144,9 +145,9 @@ export function ResourcePanel({
     const lines = wrapLines(message, Math.max(1, width - 4))
     const height = Math.min(lines.length + 4, MAX_COMPACT_ERROR_PANEL_HEIGHT, Math.max(1, terminalHeight - 2))
     return (
-      <PanelContainer width={width} height={height} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+      <PanelOverlay width={width} height={height} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
         <Text color="red">{lines.join('\n')}</Text>
-      </PanelContainer>
+      </PanelOverlay>
     )
   }
 
@@ -157,7 +158,7 @@ export function ResourcePanel({
     const boundedScroll = Math.max(0, Math.min(detailScroll, maximum))
     const start = panel.followTail ? maximum - boundedScroll : boundedScroll
     return (
-      <PanelContainer width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+      <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
         <Box flexDirection="column" overflow="hidden">
           <PanelTitle title={panel.title} color={color} />
           {panel.rows.map((row, index) => (
@@ -188,10 +189,54 @@ export function ResourcePanel({
             </Text>
           ) : null}
         </Box>
-      </PanelContainer>
+      </PanelOverlay>
     )
   }
 
+  if (panel.kind === 'effort') {
+    return (
+      <EffortPanel
+        slider={panel.slider}
+        {...(panel.body ? { body: panel.body } : {})}
+        width={width}
+        {...(onPanelElement ? { onElement: onPanelElement } : {})}
+        {...(onSliderElement ? { onSliderElement } : {})}
+      />
+    )
+  }
+  if (panel.kind === 'models') {
+    const height = composer?.height ?? COMPOSER_PANEL_HEIGHT
+    const capacity = panelRowCapacity(panel.kind, height, terminalWidth, allRows)
+    const start = Math.max(0, Math.min(viewportStart, allRows.length - capacity))
+    const rows = allRows.slice(start, start + capacity)
+    const modelId = allRows[hoveredRow ?? selected]?.value
+    return (
+      <Box ref={onPanelElement} width={width} height={height} overflow="hidden" flexDirection="column">
+        <ModelPicker
+          panel={panel}
+          rows={rows}
+          selected={selected}
+          start={start}
+          width={width}
+          // The help footer takes the last row.
+          height={Math.max(1, height - 1)}
+          allRows={allRows}
+          query={query}
+          filter={filter}
+          focus={modelPanelFocus}
+          animate={settings.animations}
+          {...(pressedRow !== undefined ? { pressedRow } : {})}
+          {...(hoveredRow !== undefined ? { hoveredRow } : {})}
+          {...(onRowElement ? { onRowElement } : {})}
+          {...(pressedFilter ? { pressedFilter } : {})}
+          {...(hoveredFilter ? { hoveredFilter } : {})}
+          {...(onFilterElement ? { onFilterElement } : {})}
+          {...(onSearchElement ? { onSearchElement } : {})}
+        />
+        <PanelHelpFooter width={width} {...(modelId ? { modelId } : {})} />
+      </Box>
+    )
+  }
   const capacity =
     panel.kind === 'agents'
       ? agentGridCapacity(terminalWidth, terminalHeight)
@@ -213,50 +258,10 @@ export function ResourcePanel({
   const compactList = ['help', 'skills', 'mcp', 'tasks', 'permissions', 'tools'].includes(panel.kind)
   const wrapLongContent = panel.kind === 'error' || allRows.length === 0
   const errorHeight = panel.kind === 'error' ? compactErrorPanelHeight(rows, width, terminalHeight) : undefined
-  if (panel.kind === 'effort') {
-    return (
-      <EffortPanel
-        panel={panel}
-        width={width}
-        {...(onPanelElement ? { onElement: onPanelElement } : {})}
-        {...(onSliderElement ? { onSliderElement } : {})}
-      />
-    )
-  }
-  if (panel.kind === 'models') {
-    const height = composer?.height ?? COMPOSER_PANEL_HEIGHT
-    return (
-      <PanelContainer
-        width={width}
-        height={height}
-        inline
-        paddingX={0}
-        {...(allRows[hoveredRow ?? selected]?.value ? { footerModelId: allRows[hoveredRow ?? selected]!.value } : {})}
-        {...(onPanelElement ? { onElement: onPanelElement } : {})}
-      >
-        <ModelPicker
-          {...rowProps}
-          panel={panel}
-          width={width}
-          // The help footer takes the last row.
-          height={Math.max(1, height - 1)}
-          allRows={allRows}
-          query={query}
-          filter={filter}
-          focus={modelPanelFocus}
-          animate={settings.animations}
-          {...(pressedFilter ? { pressedFilter } : {})}
-          {...(hoveredFilter ? { hoveredFilter } : {})}
-          {...(onFilterElement ? { onFilterElement } : {})}
-          {...(onSearchElement ? { onSearchElement } : {})}
-        />
-      </PanelContainer>
-    )
-  }
   if (panel.kind === 'context') {
     const used = context.projectedTokens ?? context.currentTokens
     return (
-      <PanelContainer width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+      <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
         <Box flexDirection="column" overflow="hidden">
           <Box justifyContent="space-between">
             <Text bold color={accent} wrap="truncate-end">
@@ -294,7 +299,7 @@ export function ResourcePanel({
             ))}
           </Box>
         </Box>
-      </PanelContainer>
+      </PanelOverlay>
     )
   }
   if (panel.kind === 'settings' || panel.kind === 'voice') {
@@ -336,7 +341,7 @@ export function ResourcePanel({
   }
 
   return (
-    <PanelContainer
+    <PanelOverlay
       width={width}
       {...(errorHeight === undefined ? {} : { height: errorHeight })}
       {...(onPanelElement ? { onElement: onPanelElement } : {})}
@@ -509,7 +514,7 @@ export function ResourcePanel({
           </Box>
         ) : null}
       </Box>
-    </PanelContainer>
+    </PanelOverlay>
   )
 }
 

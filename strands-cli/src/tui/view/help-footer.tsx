@@ -46,7 +46,7 @@ export function PanelHelpFooter({
               : panel.kind === 'models'
                 ? width < 53
                   ? 'Ctrl+Y · Tab · / · ↑↓ · Enter · Esc'
-                  : 'Ctrl+Y copy ID · Tab section · / search · ↑↓ · Enter choose · Esc back'
+                  : 'Ctrl+Y copy ID · Tab section · / search in models · ↑↓ · Enter choose · Esc back'
                 : panel.kind === 'tools' || panel.kind === 'permissions'
                   ? '↑↓ · Enter toggle · Esc save'
                   : panel.kind === 'skills'

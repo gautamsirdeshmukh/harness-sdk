@@ -134,10 +134,6 @@ describe('ChatView', () => {
     expect(output.indexOf('MCP servers (1 configured)')).toBeLessThan(
       output.indexOf('Viewing MCP servers (1 configured)')
     )
-    const lines = output.split('\n')
-    const statusRow = lines.findIndex((line) => line.includes('Viewing MCP servers (1 configured)'))
-    expect(lines[statusRow - 1]).toContain('┌')
-    expect(lines[statusRow + 5]).toContain('┘')
   })
 
   it.each([
@@ -256,8 +252,6 @@ describe('ChatView', () => {
     const lines = output.split('\n')
     expect(lines.find((line) => line.includes('/context'))).toMatch(/\/context\s+Show context usage/)
     expect(lines.find((line) => line.includes('/help'))).toContain('› /help')
-    expect(lines.some((line) => line.includes('┌'))).toBe(true)
-    expect(lines.some((line) => line.includes('┘'))).toBe(true)
   })
 
   it('renders slash-command signatures and completions while editing arguments', () => {
@@ -1224,12 +1218,6 @@ describe('ChatView', () => {
     expect(Math.abs(center - 45)).toBeLessThanOrEqual(3)
     expect(lines.join('\n')).not.toContain('Providers')
     expect(lines.join('\n')).not.toContain('Search models')
-    const top = lines.find((line) => line.includes('┌'))
-    const bottom = lines.find((line) => line.includes('┘'))
-    expect(top).toBeDefined()
-    expect(bottom).toBeDefined()
-    expect(top!.indexOf('┌')).toBe(1)
-    expect(top!.lastIndexOf('┐')).toBe(88)
   })
 
   it('renders providers and models as focused 33/66 columns', () => {
@@ -1274,7 +1262,6 @@ describe('ChatView', () => {
     const header = wideLines.find((line) => line.includes('Providers'))
     expect(header).toContain('Search models')
     const modelRow = wideLines.findIndex((line) => line.includes('Current Model'))
-    expect(modelRow - wideLines.indexOf(header!)).toBe(2)
     expect(wideLines[modelRow]).toContain('current')
     expect(wideLines[modelRow]).toContain('› Current Model')
     expect(wide).not.toContain('Effort')

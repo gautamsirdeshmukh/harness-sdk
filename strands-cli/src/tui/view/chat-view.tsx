@@ -8,10 +8,15 @@ import {
   type CommandAssistance,
   type LocalCommandSpec,
 } from '../chat/commands.js'
-import { COMPOSER_PANEL_HEIGHT, composerMaxRows, promptEditorHeight } from '../terminal/composer.js'
+import { composerMaxRows, promptEditorHeight } from '../terminal/composer.js'
 import type { ScreenSelectionSegment } from '../terminal/mouse-input.js'
 import { VOICE_METER_WIDTH, voiceMeterFill } from '../voice/session.js'
-import type { MetadataTarget, ModelPanelFocus } from './interaction.js'
+import {
+  composerPanelHeight,
+  MAX_VISIBLE_BACKGROUND_TASKS,
+  type MetadataTarget,
+  type ModelPanelFocus,
+} from './interaction.js'
 import { PromptEditor, promptContentSize } from './prompt-editor.js'
 import { ResourcePanel } from './panels.js'
 import { CommandPalette } from './command-palette.js'
@@ -23,8 +28,6 @@ import { useSpinner } from './use-spinner.js'
 import { Box, Text, ThemeProvider, useTheme } from './theme.js'
 import { ComposerFooter, PanelHelpContext } from './help-footer.js'
 import { FadeIn } from './fade-in.js'
-
-const MAX_VISIBLE_BACKGROUND_TASKS = 4
 
 export type QueuedPromptAction = 'edit' | 'up' | 'down' | 'steer'
 export type QueuedPromptTarget = `${string}:${QueuedPromptAction}`
@@ -85,6 +88,7 @@ function ChatViewContent({
   frogBrandAnimationId,
   introStartedAt,
   panelRows,
+  composerHeight,
   frog,
   onFrogComplete,
   selection,
@@ -139,6 +143,7 @@ function ChatViewContent({
   frogBrandAnimationId?: number
   introStartedAt?: number
   panelRows?: ChatPanel['rows']
+  composerHeight?: number
   frog?: { id: number; variant: FrogVariant }
   onFrogComplete?: (id: number) => void
   selection?: readonly ScreenSelectionSegment[]
@@ -182,7 +187,7 @@ function ChatViewContent({
   const editorMaxRows = composerMaxRows(terminalHeight, composerStatusRows + suggestionRows)
   const editorMaxHeight = Math.max(party ? 3 : 1, terminalHeight - composerStatusRows - suggestionRows - 2)
   const editorHeight = composerPanel
-    ? Math.min(editorMaxHeight, COMPOSER_PANEL_HEIGHT + (party ? 2 : 0))
+    ? (composerHeight ?? composerPanelHeight(snapshot, terminalHeight, party))
     : promptEditorHeight(
         input,
         cursor,

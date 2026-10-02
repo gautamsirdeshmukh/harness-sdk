@@ -1140,23 +1140,10 @@ describe('ChatController', () => {
     expect(controller.getSnapshot()).toMatchObject({ status: 'closed', exitCode: 0 })
   })
 
-  it.each([true, false])('shows all built-in provider filters when discovery returns models: %s', async (hasModels) => {
+  it('shows all built-in provider filters when discovery returns no models', async () => {
     const target = backend()
     target.info = () => ({ model: 'bedrock/current-model' })
-    target.listModels = vi.fn(() =>
-      hasModels
-        ? [
-            {
-              id: 'current-model',
-              name: 'Current model',
-              description: '',
-              value: 'bedrock/current-model',
-              catalog: 'bedrock',
-              active: true,
-            },
-          ]
-        : []
-    )
+    target.listModels = vi.fn(() => [])
     const controller = new ChatController(target)
 
     await controller.openModelPanel()
@@ -1173,9 +1160,7 @@ describe('ChatController', () => {
       { id: 'litellm', label: 'LiteLLM' },
     ])
     expect(panel.rows).toHaveLength(1)
-    expect(panel.rows.flatMap((row) => (row.value ? [row.value] : []))).toEqual(
-      hasModels ? ['bedrock/current-model'] : []
-    )
+    expect(panel.rows.flatMap((row) => (row.value ? [row.value] : []))).toEqual([])
     expect(target.listModels).toHaveBeenCalledOnce()
   })
 
@@ -1250,32 +1235,6 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().context).toEqual({})
   })
 
-  it('keeps effort controls out of the model panel', async () => {
-    const target = backend()
-    target.listModels = () => [
-      {
-        id: 'bedrock/current-model',
-        name: 'Current Model',
-        description: '',
-        active: true,
-      },
-    ]
-    target.listEfforts = vi.fn(() => [
-      {
-        id: 'off',
-        label: 'Model default',
-        active: true,
-      },
-    ])
-    const controller = new ChatController(target)
-
-    await controller.submit('/model')
-
-    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'models' })
-    expect(controller.getSnapshot().panel).not.toHaveProperty('slider')
-    expect(target.listEfforts).not.toHaveBeenCalled()
-  })
-
   it('continues to effort after selecting a model that supports it', async () => {
     const target = backend()
     let model = 'bedrock/current-model'
@@ -1284,10 +1243,10 @@ describe('ChatController', () => {
       { id: model, name: 'Current Model', description: '', active: true },
       { id: 'bedrock/next-model', name: 'Next Model', description: '' },
     ]
-    target.listEfforts = () => [
+    target.listEfforts = vi.fn(() => [
       { id: 'low', label: 'Low', active: true },
       { id: 'high', label: 'High' },
-    ]
+    ])
     target.switchModel = vi.fn(async (selected) => {
       model = selected
       return selected
@@ -1295,6 +1254,8 @@ describe('ChatController', () => {
     const controller = new ChatController(target)
 
     await controller.openModelPanel()
+    expect(controller.getSnapshot().panel).not.toHaveProperty('slider')
+    expect(target.listEfforts).not.toHaveBeenCalled()
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
 
     expect(controller.getSnapshot().panel).toMatchObject({

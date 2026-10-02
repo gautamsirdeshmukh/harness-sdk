@@ -15,10 +15,12 @@ export {
   FROG_THEMES,
   FROG_THEME_LABELS,
   THEME_COLOR_KEYS,
+  CUSTOM_THEME_COLOR_KEYS,
   type ChatSettings,
   type FrogTheme,
   type ResolvedColorMode,
   type ThemeColors,
+  type ThemeSettings,
   type CustomTheme,
   type SettingsCategory,
 } from '../settings.js'
@@ -373,7 +375,6 @@ export interface ChatPanelSlider {
 }
 
 export interface ChatPanelBase {
-  id: string
   title: string
   rows: readonly ChatPanelRow[]
   searchable?: boolean
@@ -381,114 +382,52 @@ export interface ChatPanelBase {
   body?: string
 }
 
-export interface ChatProgressPanel extends ChatPanelBase {
-  kind: 'progress'
-}
+export type NewChatPanel =
+  | (ChatPanelBase & {
+      kind:
+        | 'progress'
+        | 'context'
+        | 'tasks'
+        | 'sessions'
+        | 'skills'
+        | 'mcp'
+        | 'agents'
+        | 'rename'
+        | 'permissions'
+        | 'tools'
+        | 'voice'
+        | 'export'
+        | 'help'
+        | 'error'
+    })
+  | (ChatPanelBase & {
+      kind: 'models'
+      /** Models are still being discovered. */
+      loading?: boolean
+    })
+  | (ChatPanelBase & {
+      kind: 'effort'
+      slider: ChatPanelSlider
+    })
+  | (ChatPanelBase & {
+      kind: 'permission'
+      diff?: ChatDiffPreview
+    })
+  | (ChatPanelBase & {
+      kind: 'detail'
+      followTail?: boolean
+      activity?: BackgroundAgentActivity
+    })
+  | (ChatPanelBase & {
+      kind: 'settings'
+      settingsCategory?: SettingsCategory
+      settingsCategories?: readonly { id: SettingsCategory; label: string; description: string }[]
+    })
 
-export interface ChatContextPanel extends ChatPanelBase {
-  kind: 'context'
-}
-
-export interface ChatTasksPanel extends ChatPanelBase {
-  kind: 'tasks'
-}
-
-export interface ChatSessionsPanel extends ChatPanelBase {
-  kind: 'sessions'
-}
-
-export interface ChatSkillsPanel extends ChatPanelBase {
-  kind: 'skills'
-}
-
-export interface ChatMcpPanel extends ChatPanelBase {
-  kind: 'mcp'
-}
-
-export interface ChatAgentsPanel extends ChatPanelBase {
-  kind: 'agents'
-}
-
-export interface ChatRenamePanel extends ChatPanelBase {
-  kind: 'rename'
-}
-
-export interface ChatPermissionsPanel extends ChatPanelBase {
-  kind: 'permissions'
-}
-
-export interface ChatToolsPanel extends ChatPanelBase {
-  kind: 'tools'
-}
-
-export interface ChatVoicePanel extends ChatPanelBase {
-  kind: 'voice'
-}
-
-export interface ChatExportPanel extends ChatPanelBase {
-  kind: 'export'
-}
-
-export interface ChatHelpPanel extends ChatPanelBase {
-  kind: 'help'
-}
-
-export interface ChatErrorPanel extends ChatPanelBase {
-  kind: 'error'
-}
-
-export interface ChatModelPanel extends ChatPanelBase {
-  kind: 'models'
-  /** Models are still being discovered. */
-  loading?: boolean
-}
-
-export interface ChatEffortPanel extends ChatPanelBase {
-  kind: 'effort'
-  slider: ChatPanelSlider
-}
-
-export interface ChatPermissionPanel extends ChatPanelBase {
-  kind: 'permission'
-  diff?: ChatDiffPreview
-}
-
-export interface ChatDetailPanel extends ChatPanelBase {
-  kind: 'detail'
-  followTail?: boolean
-  activity?: BackgroundAgentActivity
-}
-
-export interface ChatSettingsPanel extends ChatPanelBase {
-  kind: 'settings'
-  settingsCategory?: SettingsCategory
-  settingsCategories?: readonly { id: SettingsCategory; label: string; description: string }[]
-}
-
-export type ChatPanel =
-  | ChatProgressPanel
-  | ChatContextPanel
-  | ChatTasksPanel
-  | ChatSessionsPanel
-  | ChatSkillsPanel
-  | ChatMcpPanel
-  | ChatAgentsPanel
-  | ChatRenamePanel
-  | ChatPermissionsPanel
-  | ChatToolsPanel
-  | ChatVoicePanel
-  | ChatExportPanel
-  | ChatHelpPanel
-  | ChatErrorPanel
-  | ChatModelPanel
-  | ChatEffortPanel
-  | ChatPermissionPanel
-  | ChatDetailPanel
-  | ChatSettingsPanel
-
-type WithoutPanelId<Panel> = Panel extends ChatPanel ? Omit<Panel, 'id'> : never
-
-export type NewChatPanel = WithoutPanelId<ChatPanel>
+export type ChatPanel = NewChatPanel & { id: string }
+export type ChatModelPanel = Extract<ChatPanel, { kind: 'models' }>
+export type ChatPermissionPanel = Extract<ChatPanel, { kind: 'permission' }>
+export type ChatDetailPanel = Extract<ChatPanel, { kind: 'detail' }>
 
 export interface ChatRuntimeInfo {
   agent: string

@@ -40,9 +40,8 @@ import {
   adjacentSliderOption,
   agentGridCapacity,
   agentGridColumns,
+  composerPanelHeight,
   cycleModelPanelFocus,
-  moveModelPanelFocus,
-  panelSlider,
   cyclePanelFilter,
   detailPageSize,
   elementAtMouse,
@@ -69,8 +68,8 @@ import {
 } from './interaction.js'
 import { parseFrogCommand, type FrogVariant } from './frog-easter-egg.js'
 import { maxDetailScroll, maxPermissionScroll } from './presentation.js'
-import { CustomThemeEditor, type Appearance } from './custom-theme-editor.js'
-import type { ChatPanelRow } from '../chat/types.js'
+import { CustomThemeEditor } from './custom-theme-editor.js'
+import type { ChatPanelRow, ThemeSettings } from '../chat/types.js'
 
 export function ChatApp({
   controller,
@@ -83,19 +82,25 @@ export function ChatApp({
 }): ReactElement {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const [appearanceOpen, setAppearanceOpen] = useState(false)
-  const [previewAppearance, setPreviewAppearance] = useState<Appearance>()
+  const [previewAppearance, setPreviewAppearance] = useState<ThemeSettings>()
   const [footerElements, registerFooterElement] = useElementMap<'settings' | 'setup' | 'help'>()
   const activateRow = useCallback(
     (row: ChatPanelRow): Promise<boolean> => {
+      const panelKind = controller.getSnapshot().panel?.kind
       if (
-        controller.getSnapshot().panel?.kind === 'settings' &&
+        panelKind === 'settings' &&
         (row.value === 'frogTheme=custom' ||
           (row.value === 'frogTheme' && controller.getSnapshot().settings.frogTheme === 'custom'))
       ) {
         setAppearanceOpen(true)
         return Promise.resolve(true)
       }
-      return controller.activatePanelRow(row)
+      return controller.activatePanelRow(row).then((activated) => {
+        if (panelKind === 'models' && activated && controller.getSnapshot().panel?.kind === 'models') {
+          controller.dismissPanel()
+        }
+        return activated
+      })
     },
     [controller]
   )
@@ -226,6 +231,10 @@ export function ChatApp({
         snapshot.panel.kind === 'models'
       )
     : undefined
+  const composerHeight =
+    snapshot.panel?.kind === 'models' || snapshot.panel?.kind === 'effort'
+      ? composerPanelHeight(snapshot, height, party)
+      : undefined
   const viewProps = {
     snapshot,
     input: editor.input,
@@ -244,6 +253,7 @@ export function ChatApp({
     transcriptScroll,
     ...(actionableCommandToken ? { actionableCommandToken } : {}),
     ...(assistance ? { commandAssistance: assistance } : {}),
+    ...(composerHeight !== undefined ? { composerHeight } : {}),
     party,
     expandedToolGroups,
   }
@@ -292,25 +302,30 @@ export function ChatApp({
   }, [])
 
   useLayoutEffect(() => {
-    const { snapshot, panelRows } = viewPropsRef.current
+    const { snapshot, terminalWidth, terminalHeight, panelRows, composerHeight } = viewPropsRef.current
     if (snapshot.panel && panelRows) {
       const agents = snapshot.panel.kind === 'agents'
       const capacity = agents
-        ? agentGridCapacity(width, height)
-        : panelRowCapacity(snapshot.panel.kind, height, width, panelRows)
+        ? agentGridCapacity(terminalWidth, terminalHeight)
+        : panelRowCapacity(
+            snapshot.panel.kind,
+            snapshot.panel.kind === 'models' ? (composerHeight ?? terminalHeight) : terminalHeight,
+            terminalWidth,
+            panelRows
+          )
       const start = agents
         ? revealAgentGridSelection(
             panelSelectionRef.current,
             panelViewportStartRef.current,
             capacity,
             panelRows.length,
-            agentGridColumns(width)
+            agentGridColumns(terminalWidth)
           )
         : revealPanelSelection(panelSelectionRef.current, panelViewportStartRef.current, capacity, panelRows.length)
       panelViewportStartRef.current = start
       setPanelViewportStart(start)
     }
-  }, [width, height])
+  }, [width, height, composerHeight])
 
   useEffect(() => {
     if (snapshot.status === 'closed') {
@@ -342,7 +357,8 @@ export function ChatApp({
     setPressedQueuedPrompt(undefined)
     setDetailScroll(0)
     panelSliderDraggingRef.current = false
-    panelSliderValueRef.current = panelSlider(snapshot.panel)?.options.find((option) => option.active)?.id
+    panelSliderValueRef.current =
+      snapshot.panel?.kind === 'effort' ? snapshot.panel.slider.options.find((option) => option.active)?.id : undefined
   }, [snapshot.panel?.id, resetPanelPosition, resetHover])
 
   useEffect(() => {
@@ -360,7 +376,7 @@ export function ChatApp({
     }
   }, [editingQueuedPromptId, snapshot.queuedPrompts])
 
-  const activeSlider = panelSlider(snapshot.panel)
+  const activeSlider = snapshot.panel?.kind === 'effort' ? snapshot.panel.slider : undefined
   useEffect(() => {
     panelSliderValueRef.current = activeSlider?.options.find((option) => option.active)?.id
   }, [activeSlider])
@@ -402,7 +418,7 @@ export function ChatApp({
       if (!shouldProcessMouseInput(mouse, mouseMoveStateRef.current)) {
         return
       }
-      const { snapshot, terminalWidth, terminalHeight, suggestions, panelRows } = viewPropsRef.current
+      const { snapshot, terminalWidth, terminalHeight, suggestions, panelRows, composerHeight } = viewPropsRef.current
       const currentEditor = editorRef.current
       const button = mouse.button & 3
       const scroll = mouseScrollDirection(mouse)
@@ -429,7 +445,12 @@ export function ChatApp({
           const agents = snapshot.panel.kind === 'agents'
           const capacity = agents
             ? agentGridCapacity(terminalWidth, terminalHeight)
-            : panelRowCapacity(snapshot.panel.kind, terminalHeight, terminalWidth, rows)
+            : panelRowCapacity(
+                snapshot.panel.kind,
+                snapshot.panel.kind === 'models' ? (composerHeight ?? terminalHeight) : terminalHeight,
+                terminalWidth,
+                rows
+              )
           const nextStart = agents
             ? scrollAgentGridViewport(
                 panelViewportStartRef.current,
@@ -544,7 +565,7 @@ export function ChatApp({
         resetPressed()
       }
       const updateSliderSelection = (): void => {
-        const slider = panelSlider(snapshot.panel)
+        const slider = snapshot.panel?.kind === 'effort' ? snapshot.panel.slider : undefined
         if (!sliderElement || !slider || slider.disabled) {
           return
         }
@@ -710,6 +731,7 @@ export function ChatApp({
         panelQuery,
         panelFilter,
         modelPanelFocus,
+        composerHeight,
       } = viewPropsRef.current
       const currentEditor = editorRef.current
       const mouse = parseMouseInput(character)
@@ -717,7 +739,6 @@ export function ChatApp({
         handleMouse(mouse)
         return
       }
-      const hoveredRow = hoveredPanelRow
       selectionDragRef.current = undefined
       setScreenSelection([])
       resetHover()
@@ -800,7 +821,12 @@ export function ChatApp({
         const rowCapacity =
           snapshot.panel.kind === 'agents'
             ? agentGridCapacity(terminalWidth, terminalHeight)
-            : panelRowCapacity(snapshot.panel.kind, terminalHeight, terminalWidth, rows)
+            : panelRowCapacity(
+                snapshot.panel.kind,
+                snapshot.panel.kind === 'models' ? (composerHeight ?? terminalHeight) : terminalHeight,
+                terminalWidth,
+                rows
+              )
         if (snapshot.panel.kind === 'permission' && key.escape) {
           const reject = rows.find((row) => row.tone === 'danger')
           if (reject) {
@@ -833,13 +859,13 @@ export function ChatApp({
           }
           return
         }
-        const copyableModelId = panelModelId(snapshot.panel, rows[hoveredRow ?? panelSelectionRef.current])
+        const copyableModelId = panelModelId(snapshot.panel, rows[hoveredPanelRow ?? panelSelectionRef.current])
         if (copyableModelId && key.ctrl && !key.meta && !key.super && character.toLowerCase() === 'y') {
           copyText(copyableModelId)
           return
         }
-        const slider = panelSlider(snapshot.panel)
-        if (slider && snapshot.panel.kind === 'effort') {
+        if (snapshot.panel.kind === 'effort') {
+          const slider = snapshot.panel.slider
           // Arrow keys already apply the effort, so Enter just closes like Escape.
           if (key.return) {
             controller.dismissPanel()
@@ -852,18 +878,15 @@ export function ChatApp({
             }
             return
           }
-          if (snapshot.panel.kind === 'effort') {
-            return
-          }
+          return
         }
         if (snapshot.panel.kind === 'models') {
           if (key.tab) {
             setModelPanelFocus(cycleModelPanelFocus(modelPanelFocus, snapshot.panel, key.shift ? -1 : 1))
             return
           }
-          const nextFocus = moveModelPanelFocus(modelPanelFocus, key)
-          if (nextFocus) {
-            setModelPanelFocus(nextFocus)
+          if (modelPanelFocus === 'search' && key.downArrow) {
+            setModelPanelFocus('models')
             return
           }
           if (modelPanelFocus === 'search' && key.return) {
@@ -878,12 +901,7 @@ export function ChatApp({
           if (modelPanelFocus === 'models') {
             const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
             if (key.return && selected?.value) {
-              void activateRow(selected).then((switched) => {
-                const next = controller.getSnapshot().panel
-                if (switched && next?.kind === 'models') {
-                  controller.dismissPanel()
-                }
-              })
+              void activateRow(selected)
               return
             }
             const nextSelection = moveSelection(panelSelectionRef.current, key, rows.length, rowCapacity)

@@ -26,14 +26,13 @@ afterEach(async () => {
 
 function createController() {
   const switchModel = vi.fn(async (_model: string) => {})
-  const setEffort = vi.fn(async (_effort: string) => {})
   const backend: ChatBackend = {
     id: 'panel-resize-test',
     name: 'Strands harness',
     protocol: 'strands',
     async *stream() {
       yield* []
-      return { stopReason: 'endTurn', context: { projectedTokens: 100, contextWindow: 1_000 } }
+      return { stopReason: 'endTurn', context: {} }
     },
     cancel() {},
     info: () => ({ model: 'model-00' }),
@@ -45,16 +44,14 @@ function createController() {
         catalog: 'openai',
         active: index === 0,
       })),
-    listEfforts: () => ['low', 'medium', 'high'].map((id) => ({ id, label: id, active: id === 'medium' })),
     modelChangeMode: () => 'live',
     switchModel,
-    setEffort,
   }
   const controller = new ChatController(backend, {
     settings: { animations: false },
     runtime: { model: 'model-00', cwd: '/work' },
   })
-  return { controller, switchModel, setEffort }
+  return { controller, switchModel }
 }
 
 async function mount(controller: ChatControllerApi) {

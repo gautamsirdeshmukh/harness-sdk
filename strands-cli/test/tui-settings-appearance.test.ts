@@ -65,7 +65,6 @@ describe('appearance settings controller', () => {
   })
 
   it.each([
-    'colorMode=light',
     'customTheme=%',
     `customTheme=${encodeURIComponent(JSON.stringify({ base: 'green', light: {}, dark: { accent: 'red' } }))}`,
   ])('rejects malformed appearance input: %s', async (value) => {

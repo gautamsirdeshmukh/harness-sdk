@@ -57,6 +57,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const renderApp = options.renderApp ?? render
   const hardExit = (exitCode: number): never => {
     leaveTerminalMode()
+    terminalTheme.dispose()
     return hardExitProcessTree(exitCode)
   }
   let controller: ChatControllerApi | undefined

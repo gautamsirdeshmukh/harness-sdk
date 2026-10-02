@@ -35,9 +35,8 @@ describe('appearance persistence', () => {
       })
     )
     const config = await CliConfigStore.load(path)
-    const migrated = JSON.parse(await readFile(path, 'utf8'))
-    expect(migrated.settings).not.toHaveProperty('colorMode')
-    expect(migrated.settings.customTheme.light).toEqual({ accent: '#123456' })
+    await config.setSettings({ animations: false })
+    expect(JSON.parse(await readFile(path, 'utf8')).settings.customTheme.light.background).toBe('#ffffff')
     await config.setSettings({
       frogTheme: 'custom',
       customTheme: { base: 'merlin', light: { accent: '#ABCDEF' }, dark: { frog: '#123ABC' } },

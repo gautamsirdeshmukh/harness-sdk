@@ -6,7 +6,6 @@ import {
   cycleModelPanelFocus,
   filterPanelRows,
   moveAgentGridSelection,
-  moveModelPanelFocus,
   moveSelection,
   mouseScrollDirection,
   panelRowCapacity,
@@ -50,12 +49,6 @@ describe('panel helpers', () => {
     expect(cycleModelPanelFocus('models', panel, 1)).toBe('providers')
     expect(cycleModelPanelFocus('search', panel, 1)).toBe('providers')
     expect(cycleModelPanelFocus('providers', panel, -1)).toBe('models')
-
-    expect(moveModelPanelFocus('search', { downArrow: true })).toBe('models')
-    for (const focus of ['providers', 'models', 'search'] as const) {
-      expect(moveModelPanelFocus(focus, { leftArrow: true })).toBeUndefined()
-      expect(moveModelPanelFocus(focus, { rightArrow: true })).toBeUndefined()
-    }
 
     const bare = { id: 'models', kind: 'models' as const, title: 'models', rows: [] }
     expect(cycleModelPanelFocus('models', bare, 1)).toBe('models')
@@ -122,7 +115,8 @@ describe('panel helpers', () => {
     expect(scrollAgentGridViewport(0, 1, 10, 6, 3)).toBe(3)
     expect(scrollAgentGridViewport(3, 1, 10, 6, 3)).toBe(6)
     expect(revealAgentGridSelection(8, 0, 6, 10, 3)).toBe(3)
-    expect(panelRowCapacity('models', 20)).toBe(5)
+    expect(panelRowCapacity('models', 10)).toBe(5)
+    expect(panelRowCapacity('models', 12)).toBe(7)
     expect(panelRowCapacity('sessions', 20)).toBe(10)
     expect(panelRowCapacity('settings', 20)).toBe(5)
     expect(scrollPanelViewport(0, 1, 20, 5)).toBe(1)

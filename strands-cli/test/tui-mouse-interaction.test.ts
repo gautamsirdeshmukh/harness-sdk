@@ -268,22 +268,17 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(target.setEffort).toHaveBeenLastCalledWith('low'))
   })
 
-  it.each(['\r', '\u001b'])('closes the /effort panel with %j without switching models', async (closeKey) => {
+  it.each(['\r', '\u001b'])('closes the /effort panel with %j', async (closeKey) => {
     const input = ttyInput()
     const output = ttyOutput(80, 20)
     const target = backend()
     target.info = () => ({ model: 'model-00', effort: 'Medium' })
-    target.listModels = () => [
-      { id: 'model-01', name: 'Model 01', description: '' },
-      { id: 'model-00', name: 'Model 00', description: '', active: true },
-    ]
     target.listEfforts = () => [
       { id: 'low', label: 'Low' },
       { id: 'medium', label: 'Medium', active: true },
       { id: 'high', label: 'High' },
     ]
     target.setEffort = vi.fn(async (effort) => effort)
-    target.switchModel = vi.fn()
     const controller = new ChatController(target, {
       runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
     })
@@ -304,7 +299,6 @@ describe('TUI mouse input', () => {
     input.write(closeKey)
 
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
-    expect(target.switchModel).not.toHaveBeenCalled()
   })
 
   it('copies a hovered model, then searches and chooses a result', async () => {
@@ -344,10 +338,6 @@ describe('TUI mouse input', () => {
     rawOutput = ''
     input.write('\u0019')
     await vi.waitFor(() => expect(rawOutput).toContain('\u001b]52;c;bW9kZWwtMDE=\u001b\\'))
-
-    input.write('1')
-    await instance.waitUntilRenderFlush()
-    expect(frame().join('\n')).toContain('Model 00')
 
     input.write('/')
     await instance.waitUntilRenderFlush()

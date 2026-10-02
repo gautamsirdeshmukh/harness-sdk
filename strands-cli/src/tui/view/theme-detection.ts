@@ -57,17 +57,24 @@ export function observeTerminalColorMode(
       const result = readThemeResponses(pending + decoder.write(chunk), {
         background: (value) => {
           const mode = parseBackgroundMode(value)
-          if (mode) setColorMode(mode)
-          finishInitialQuery()
+          if (mode) {
+            setColorMode(mode)
+            finishInitialQuery()
+          }
         },
         changed: () => output.write(BACKGROUND_QUERY),
       })
       pending = result.pending
       if (pending) {
-        pendingTimer = setTimeout(() => {
-          filtered.push(pending)
-          pending = ''
-        }, 10)
+        pendingTimer = setTimeout(
+          () => {
+            filtered.push(pending)
+            pending = ''
+          },
+          pending.startsWith(BACKGROUND_RESPONSE_PREFIX) || pending.startsWith(COLOR_SCHEME_REPORT_PREFIX)
+            ? timeoutMs
+            : 10
+        )
       }
       callback(undefined, result.output)
     },

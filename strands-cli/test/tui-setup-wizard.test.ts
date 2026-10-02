@@ -1148,7 +1148,6 @@ describe('setup theme', () => {
       expect(firstThemeLine).toMatch(/Classic.*Minimal.*Homeland/u)
       expect(themeLines.find((line) => line.includes('Merlin'))).toMatch(/Merlin.*Kikker.*Cyborg/u)
       expect(themeLines.find((line) => line.includes('Spectre'))).toMatch(/Spectre.*Custom/u)
-      expect(themeLines.join('\n')).not.toMatch(/Auto.*Light.*Dark/u)
       expect(themeLines.every((line) => stringWidth(line) <= 120)).toBe(true)
       const customRow = themeLines.findIndex((line) => line.includes('Custom'))
       const customColumn = stringWidth(themeLines[customRow]!.slice(0, themeLines[customRow]!.indexOf('Custom'))) + 1

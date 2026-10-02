@@ -2,24 +2,26 @@ import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 import stringWidth from 'string-width'
 
-import type { ChatEffortPanel } from '../chat/types.js'
+import type { ChatPanelSlider } from '../chat/types.js'
 import { PanelHelpFooter } from './help-footer.js'
 import { EffortSlider } from './model-panel.js'
 import { Box, Text, useTheme } from './theme.js'
 
 export function EffortPanel({
-  panel,
+  slider,
+  body,
   width,
   onElement,
   onSliderElement,
 }: {
-  panel: ChatEffortPanel
+  slider: ChatPanelSlider
+  body?: string
   width: number
   onElement?: (element: DOMElement | null) => void
   onSliderElement?: (element: DOMElement | null) => void
 }): ReactElement {
   const theme = useTheme()
-  const [modelName = '', modelId = ''] = panel.body?.split('\n') ?? []
+  const [modelName = '', modelId = ''] = body?.split('\n') ?? []
   const contentWidth = Math.max(1, width)
   const model = modelName || modelId
   const showModel = model && stringWidth(`Reasoning effort · ${model}`) <= contentWidth
@@ -43,7 +45,7 @@ export function EffortPanel({
         </Text>
       </Box>
       <EffortSlider
-        slider={panel.slider}
+        slider={slider}
         width={sliderWidth}
         compact={false}
         showStops

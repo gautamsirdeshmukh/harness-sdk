@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 
-import { PanelContainer, PanelItemHeader, PanelTitle, type PanelRowsProps } from './panel-components.js'
+import { PanelItemHeader, PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
 import { BlinkingCursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
 
@@ -25,7 +25,7 @@ export function SessionsPanel({
   const { selection, accent } = useTheme()
   const labelWidth = Math.max(22, Math.floor(width * 0.38))
   return (
-    <PanelContainer width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+    <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
       <Box flexDirection="column" overflow="hidden">
         <Box paddingX={1} justifyContent="space-between">
           <PanelTitle title={panel.title} color={accent} />
@@ -74,6 +74,6 @@ export function SessionsPanel({
           })
         )}
       </Box>
-    </PanelContainer>
+    </PanelOverlay>
   )
 }
