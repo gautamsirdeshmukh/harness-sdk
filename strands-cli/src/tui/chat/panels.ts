@@ -112,7 +112,7 @@ export function formatTaskActivity(task: ChatTask): string {
 
 export function clonePanel(panel: ChatPanel): ChatPanel {
   return {
-    ...panel,
+    ...sanitizePanelExtensions(panel),
     rows: panel.rows.map((row) => ({
       ...row,
       ...(row.control?.kind === 'toggle'
@@ -122,18 +122,6 @@ export function clonePanel(panel: ChatPanel): ChatPanel {
           : {}),
     })),
     ...(panel.filters ? { filters: panel.filters.map((filter) => ({ ...filter })) } : {}),
-    ...(panel.slider
-      ? {
-          slider: {
-            ...panel.slider,
-            options: panel.slider.options.map((option) => ({ ...option })),
-          },
-        }
-      : {}),
-    ...(panel.diff ? { diff: sanitizeDiffPreview(panel.diff) } : {}),
-    ...(panel.settingsCategories
-      ? { settingsCategories: panel.settingsCategories.map((category) => ({ ...category })) }
-      : {}),
   }
 }
 
@@ -245,55 +233,63 @@ export function sanitizeRows(rows: ChatPanel['rows']): ChatPanelRow[] {
   }))
 }
 
-export function makePanel(
+export function makePanel<K extends ChatPanel['kind']>(
   id: string,
-  kind: ChatPanel['kind'],
+  kind: K,
   title: string,
   rows: ChatPanel['rows'],
-  options: ChatPanelOptions
+  options: ChatPanelOptions<K>
 ): ChatPanel {
+  // ChatPanelOptions<K> plus the header fields it omits is exactly the panel of kind K.
+  const panel = { ...options, id, kind, title, rows } as ChatPanel
   return {
-    id,
-    kind,
+    ...sanitizePanelExtensions(panel),
     title: sanitizeTerminalText(title),
     rows: sanitizeRows(rows),
-    ...(options.searchable !== undefined ? { searchable: options.searchable } : {}),
-    ...(options.filters
+    ...(panel.filters
       ? {
-          filters: options.filters.map((filter) => ({
+          filters: panel.filters.map((filter) => ({
             id: sanitizeTerminalText(filter.id),
             label: sanitizeTerminalText(filter.label),
           })),
         }
       : {}),
-    ...(options.slider
-      ? {
-          slider: {
-            label: sanitizeTerminalText(options.slider.label),
-            options: options.slider.options.map((option) => ({
-              id: sanitizeTerminalText(option.id),
-              label: sanitizeTerminalText(option.label),
-              ...(option.active ? { active: true } : {}),
+    ...(panel.body !== undefined ? { body: sanitizeTerminalText(panel.body) } : {}),
+  }
+}
+
+/** Returns fresh, sanitized copies of the fields only some panel kinds carry. */
+function sanitizePanelExtensions(panel: ChatPanel): ChatPanel {
+  switch (panel.kind) {
+    case 'effort':
+      return { ...panel, slider: sanitizeSlider(panel.slider) }
+    case 'permission':
+      return panel.diff ? { ...panel, diff: sanitizeDiffPreview(panel.diff) } : panel
+    case 'settings':
+      return panel.settingsCategories
+        ? {
+            ...panel,
+            settingsCategories: panel.settingsCategories.map(({ id: categoryId, label, description }) => ({
+              id: categoryId,
+              label: sanitizeTerminalText(label),
+              description: sanitizeTerminalText(description),
             })),
-            ...(options.slider.disabled ? { disabled: true } : {}),
-            ...(options.slider.focused ? { focused: true } : {}),
-          },
-        }
-      : {}),
-    ...(options.body !== undefined ? { body: sanitizeTerminalText(options.body) } : {}),
-    ...(options.diff ? { diff: sanitizeDiffPreview(options.diff) } : {}),
-    ...(options.followTail !== undefined ? { followTail: options.followTail } : {}),
-    ...(options.activity ? { activity: options.activity } : {}),
-    ...(options.settingsCategory ? { settingsCategory: options.settingsCategory } : {}),
-    ...(options.settingsCategories
-      ? {
-          settingsCategories: options.settingsCategories.map(({ id: categoryId, label, description }) => ({
-            id: categoryId,
-            label: sanitizeTerminalText(label),
-            description: sanitizeTerminalText(description),
-          })),
-        }
-      : {}),
+          }
+        : panel
+    default:
+      return panel
+  }
+}
+
+function sanitizeSlider(slider: ChatPanelSlider): ChatPanelSlider {
+  return {
+    label: sanitizeTerminalText(slider.label),
+    options: slider.options.map((option) => ({
+      id: sanitizeTerminalText(option.id),
+      label: sanitizeTerminalText(option.label),
+      ...(option.active ? { active: true } : {}),
+    })),
+    ...(slider.disabled ? { disabled: true } : {}),
   }
 }
 

@@ -34,7 +34,7 @@ describe('TUI mouse input', () => {
     instances.push(instance)
     await controller.submit('/settings')
     await instance.waitUntilRenderFlush()
-    await vi.waitFor(() => expect(controller.getSnapshot().panel?.settingsCategory).toBe('Appearance'))
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ settingsCategory: 'Appearance' }))
 
     input.write('\u001b[C')
     await vi.waitFor(() => expect(controller.getSnapshot().settings.colorMode).toBe('light'))
@@ -192,13 +192,12 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(target.switchModel).toHaveBeenCalledWith(scrolledLastModel.id))
   })
 
-  it.each(['/model', '/effort'])('drags the effort slider in %s without rebuilding the panel', async (command) => {
+  it('drags the effort slider without rebuilding the panel', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 20)
     const frame = captureFrame(output)
     const target = backend()
     target.info = () => ({ model: 'model-00', effort: 'Medium' })
-    target.listModels = vi.fn(() => [{ id: 'model-00', name: 'Model 00', description: '', active: true }])
     target.listEfforts = () => [
       { id: 'off', label: 'Model default' },
       { id: 'low', label: 'Low' },
@@ -219,7 +218,7 @@ describe('TUI mouse input', () => {
       interactive: true,
     })
     instances.push(instance)
-    await controller.submit(command)
+    await controller.submit('/effort')
     await instance.waitUntilRenderFlush()
 
     const panelId = controller.getSnapshot().panel?.id
@@ -236,7 +235,6 @@ describe('TUI mouse input', () => {
     input.write(mouseInputSequence(3, end, trackRow, 'm'))
 
     await vi.waitFor(() => expect(target.setEffort).toHaveBeenLastCalledWith('max'))
-    expect(target.listModels).toHaveBeenCalledTimes(command === '/model' ? 1 : 0)
     expect(controller.getSnapshot().panel).toMatchObject({
       id: panelId,
       slider: { options: expect.arrayContaining([expect.objectContaining({ id: 'max', active: true })]) },
@@ -323,24 +321,17 @@ describe('TUI mouse input', () => {
     expect(target.switchModel).not.toHaveBeenCalled()
   })
 
-  it('moves from the chosen model to its effort, then closes /model on Enter', async () => {
+  it('activates model search with slash and closes after choosing a result', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 30)
     const frame = captureFrame(output)
     const target = backend()
-    target.info = () => ({ model: 'model-00', effort: 'Medium' })
     target.listModels = () => [
       { id: 'model-00', name: 'Model 00', description: '', active: true },
       { id: 'model-01', name: 'Model 01', description: '' },
     ]
-    target.listEfforts = () => [
-      { id: 'low', label: 'Low' },
-      { id: 'medium', label: 'Medium', active: true },
-      { id: 'high', label: 'High' },
-    ]
     target.modelChangeMode = () => 'live'
     target.switchModel = vi.fn()
-    target.setEffort = vi.fn(async (effort) => effort)
     const controller = new ChatController(target, {
       runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
     })
@@ -356,16 +347,20 @@ describe('TUI mouse input', () => {
     await controller.submit('/model')
     await instance.waitUntilRenderFlush()
 
-    input.write('\u001b[B')
+    input.write('1')
+    await instance.waitUntilRenderFlush()
+    expect(frame().join('\n')).toContain('Model 00')
+
+    input.write('/')
+    await instance.waitUntilRenderFlush()
+    input.write('1')
+    await vi.waitFor(() => expect(frame().join('\n')).not.toContain('Model 00'))
+    expect(frame().join('\n')).toContain('Model 01')
+
+    input.write('\r')
     await instance.waitUntilRenderFlush()
     input.write('\r')
     await vi.waitFor(() => expect(target.switchModel).toHaveBeenCalledWith('model-01'))
-    await instance.waitUntilRenderFlush()
-    expect(controller.getSnapshot().panel?.kind).toBe('models')
-
-    input.write('\u001b[C')
-    await vi.waitFor(() => expect(target.setEffort).toHaveBeenLastCalledWith('high'))
-    input.write('\r')
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
     expect(target.switchModel).toHaveBeenCalledOnce()
     await vi.waitFor(() => expect(frame().join('\n')).not.toContain('Models'))
@@ -389,7 +384,7 @@ describe('TUI mouse input', () => {
     instances.push(instance)
     await controller.submit('/settings')
     await instance.waitUntilRenderFlush()
-    await vi.waitFor(() => expect(controller.getSnapshot().panel?.settingsCategory).toBe('Appearance'))
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ settingsCategory: 'Appearance' }))
     await instance.waitUntilRenderFlush()
 
     for (const theme of ['Classic', 'Minimal', 'Homeland', 'Merlin', 'Kikker', 'Cyborg', 'Spectre', 'Custom']) {

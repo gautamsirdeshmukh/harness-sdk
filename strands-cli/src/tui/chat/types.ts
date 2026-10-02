@@ -371,59 +371,51 @@ export interface ChatPanelSlider {
   label: string
   options: readonly ChatEffortOption[]
   disabled?: boolean
-  focused?: boolean
 }
 
-export interface ChatPanel {
+export type ChatPanel = {
   id: string
-  kind:
-    | 'progress'
-    | 'context'
-    | 'tasks'
-    | 'models'
-    | 'effort'
-    | 'sessions'
-    | 'skills'
-    | 'mcp'
-    | 'agents'
-    | 'rename'
-    | 'permissions'
-    | 'tools'
-    | 'settings'
-    | 'voice'
-    | 'export'
-    | 'help'
-    | 'detail'
-    | 'permission'
-    | 'error'
   title: string
   rows: readonly ChatPanelRow[]
   searchable?: boolean
   filters?: readonly ChatPanelFilter[]
-  slider?: ChatPanelSlider
   body?: string
-  diff?: ChatDiffPreview
-  followTail?: boolean
-  activity?: BackgroundAgentActivity
-  settingsCategory?: SettingsCategory
-  settingsCategories?: readonly {
-    id: SettingsCategory
-    label: string
-    description: string
-  }[]
-}
+} & (
+  | {
+      kind:
+        | 'progress'
+        | 'context'
+        | 'tasks'
+        | 'sessions'
+        | 'skills'
+        | 'mcp'
+        | 'agents'
+        | 'rename'
+        | 'permissions'
+        | 'tools'
+        | 'voice'
+        | 'export'
+        | 'help'
+        | 'error'
+    }
+  | {
+      kind: 'models'
+      /** Models are still being discovered. */
+      loading?: boolean
+    }
+  | { kind: 'effort'; slider: ChatPanelSlider }
+  | { kind: 'permission'; diff?: ChatDiffPreview }
+  | { kind: 'detail'; followTail?: boolean; activity?: BackgroundAgentActivity }
+  | {
+      kind: 'settings'
+      settingsCategory?: SettingsCategory
+      settingsCategories?: readonly { id: SettingsCategory; label: string; description: string }[]
+    }
+)
 
-export type ChatPanelOptions = Pick<
-  ChatPanel,
-  | 'searchable'
-  | 'filters'
-  | 'slider'
-  | 'body'
-  | 'diff'
-  | 'followTail'
-  | 'activity'
-  | 'settingsCategory'
-  | 'settingsCategories'
+export type ChatPanelOptions<K extends ChatPanel['kind']> = Omit<
+  ChatPanel & { kind: K },
+  'id' | 'kind' | 'title' | 'rows'
 >
 
 export interface ChatRuntimeInfo {

@@ -2,12 +2,14 @@ import type { DOMElement, Key } from 'ink'
 
 import type { ChatControllerApi, ChatPanel, ChatPanelRow, ChatPanelSlider, ChatSnapshot } from '../chat/controller.js'
 import { resolveModelTarget } from '../model/selection.js'
+import { COMPOSER_PANEL_HEIGHT } from '../terminal/composer.js'
 import type { MouseInput } from '../terminal/mouse-input.js'
 
 export type MetadataTarget = 'model' | 'effort' | 'context' | 'cwd'
-export const MODEL_COPY_TARGET = 'model:copy-id'
+// Section borders, search row, search spacing, and help footer.
+const MODEL_PANEL_CHROME_ROWS = 5
 
-export type ModelPanelFocus = 'effort' | 'search' | 'providers' | 'models' | 'copy'
+export type ModelPanelFocus = 'providers' | 'search' | 'models'
 
 export function settingsLayout(
   panelWidth: number,
@@ -258,21 +260,25 @@ export function cyclePanelFilter(filters: readonly { id: string }[], current: st
   return filters[(index + direction + filters.length) % filters.length]!.id
 }
 
+export function panelSlider(panel: ChatPanel | undefined): ChatPanelSlider | undefined {
+  return panel?.kind === 'effort' ? panel.slider : undefined
+}
+
+/** Tab order between the `/model` provider and model sections. */
 export function cycleModelPanelFocus(
   current: ModelPanelFocus,
-  panel: Pick<ChatPanel, 'slider' | 'filters'>,
-  direction: number,
-  includeCopy = false
+  panel: ChatPanel & { kind: 'models' },
+  direction: number
 ): ModelPanelFocus {
-  const order: ModelPanelFocus[] = [
-    ...(panel.slider && !panel.slider.disabled ? (['effort'] as const) : []),
-    'search',
-    ...(panel.filters?.length ? (['providers'] as const) : []),
-    'models',
-    ...(includeCopy ? (['copy'] as const) : []),
-  ]
-  const currentIndex = Math.max(0, order.indexOf(current))
-  return order[(currentIndex + (direction < 0 ? -1 : 1) + order.length) % order.length]!
+  const sections: ModelPanelFocus[] = [...(panel.filters?.length ? (['providers'] as const) : []), 'models']
+  const section = current === 'search' ? 'models' : current
+  const index = Math.max(0, sections.indexOf(section))
+  return sections[(index + (direction < 0 ? -1 : 1) + sections.length) % sections.length]!
+}
+
+/** Down leaves model search for the result list. */
+export function moveModelPanelFocus(current: ModelPanelFocus, key: Partial<Key>): ModelPanelFocus | undefined {
+  return current === 'search' && key.downArrow ? 'models' : undefined
 }
 
 export function panelPageSize(terminalHeight: number): number {
@@ -328,7 +334,7 @@ export function panelRowCapacity(
     return Math.max(1, Math.min(10, terminalHeight - 15 - sections * 2))
   }
   if (kind === 'models') {
-    return Math.max(1, Math.min(20, terminalHeight - 13))
+    return Math.max(1, Math.min(COMPOSER_PANEL_HEIGHT, terminalHeight - 2) - MODEL_PANEL_CHROME_ROWS)
   }
   if (['help', 'skills', 'mcp', 'tasks'].includes(kind)) {
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size

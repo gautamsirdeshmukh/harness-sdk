@@ -34,7 +34,7 @@ export function PanelHelpFooter({
                 ? '↑↓ move · ←→ change · Esc back'
                 : '↑↓ · ←→ change · Tab category · Esc back'
               : panel.kind === 'models'
-                ? 'Tab · Enter choose · Esc back'
+                ? 'Tab section · / search · ↑↓ · Enter choose · Esc back'
                 : panel.kind === 'tools' || panel.kind === 'permissions'
                   ? '↑↓ · Enter toggle · Esc save'
                   : panel.kind === 'skills'

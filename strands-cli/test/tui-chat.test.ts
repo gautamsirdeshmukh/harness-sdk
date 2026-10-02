@@ -552,9 +552,11 @@ describe('ChatController', () => {
       })
     )
     expect(detailUpdates).toHaveBeenCalledOnce()
-    expect(controller.getSnapshot().panel?.activity?.entries).toContainEqual(
-      expect.objectContaining({ type: 'tool', name: 'read', status: 'success' })
-    )
+    expect(controller.getSnapshot().panel).toMatchObject({
+      activity: {
+        entries: expect.arrayContaining([expect.objectContaining({ type: 'tool', name: 'read', status: 'success' })]),
+      },
+    })
 
     expect(controller.dismissPanel()).toBe(true)
     expect(stopActivity).toHaveBeenCalledOnce()
@@ -1248,70 +1250,30 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().context).toEqual({})
   })
 
-  it('changes effort from the model panel without invoking model selection', async () => {
+  it('keeps effort controls out of the model panel', async () => {
     const target = backend()
-    let effort = 'high'
-    target.info = () => ({
-      model: 'global.anthropic.claude-opus-4-8',
-      effort: effort === 'off' ? 'Model default' : 'High',
-    })
-    target.listModels = vi.fn(() => [
+    target.listModels = () => [
       {
         id: 'global.anthropic.claude-opus-4-8',
         name: 'Claude Opus 4.8',
         description: '',
         active: true,
       },
-    ])
-    target.listEfforts = () => [
+    ]
+    target.listEfforts = vi.fn(() => [
       {
         id: 'off',
         label: 'Model default',
-        ...(effort === 'off' ? { active: true } : {}),
+        active: true,
       },
-      { id: 'high', label: 'High', ...(effort === 'high' ? { active: true } : {}) },
-    ]
-    target.switchModel = vi.fn()
-    target.restartModel = vi.fn()
-    target.setEffort = vi.fn(async (selected) => {
-      effort = selected
-      return selected
-    })
+    ])
     const controller = new ChatController(target)
 
     await controller.submit('/model')
-    const panelId = controller.getSnapshot().panel?.id
 
-    expect(controller.getSnapshot().panel).toMatchObject({
-      body: 'Claude Opus 4.8\nglobal.anthropic.claude-opus-4-8',
-      slider: {
-        label: 'Effort',
-        options: [
-          { id: 'off', label: 'Model default' },
-          { id: 'high', label: 'High', active: true },
-        ],
-      },
-    })
-    expect(controller.getSnapshot().panel?.rows).toHaveLength(1)
-    await controller.activatePanelRow({
-      label: 'Effort',
-      description: 'Model default',
-      value: 'effort:off',
-    })
-
-    expect(target.setEffort).toHaveBeenCalledWith('off')
-    expect(target.listModels).toHaveBeenCalledOnce()
-    expect(target.switchModel).not.toHaveBeenCalled()
-    expect(target.restartModel).not.toHaveBeenCalled()
-    expect(controller.getSnapshot()).toMatchObject({
-      panel: {
-        id: panelId,
-        slider: {
-          options: [{ id: 'off', active: true }, { id: 'high' }],
-        },
-      },
-      runtime: { effort: 'Model default' },
-    })
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'models' })
+    expect(controller.getSnapshot().panel).not.toHaveProperty('slider')
+    expect(target.listEfforts).not.toHaveBeenCalled()
   })
 
   it('sets effort from /effort and opens an effort-only panel without an argument', async () => {
@@ -1341,19 +1303,19 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().panel).toMatchObject({
       kind: 'effort',
       rows: [],
-      slider: { focused: true, options: [{ id: 'low', active: true }, { id: 'high' }] },
+      slider: { options: [{ id: 'low', active: true }, { id: 'high' }] },
     })
     expect(target.listModels).not.toHaveBeenCalled()
 
     await controller.activatePanelRow({ label: 'Effort', description: 'High', value: 'effort:high' })
     expect(target.setEffort).toHaveBeenLastCalledWith('high')
-    expect(controller.getSnapshot().panel?.slider?.options).toEqual([
+    expect(controller.getSnapshot().panel).toHaveProperty('slider.options', [
       { id: 'low', label: 'Low' },
       expect.objectContaining({ id: 'high', active: true }),
     ])
 
     await controller.submit('/model')
-    expect(controller.getSnapshot().panel?.slider?.focused).toBeUndefined()
+    expect(controller.getSnapshot().panel?.kind).toBe('models')
   })
 
   it('reports /effort as unavailable when the model has no effort levels', async () => {
@@ -1420,21 +1382,6 @@ describe('ChatController', () => {
       rows: [{ description: `Could not change ${command}. Check your provider connection and try again.` }],
     })
     expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/qwen3:8b', effort: 'Auto' })
-  })
-
-  it('disables effort in the model panel when the model has no effort choices', async () => {
-    const target = backend()
-    target.listModels = () => [{ id: 'openai.gpt-5', name: 'GPT-5', description: '', active: true }]
-    target.listEfforts = () => [{ id: 'off', label: 'Model default', active: true }]
-    const controller = new ChatController(target)
-
-    await controller.submit('/model')
-
-    expect(controller.getSnapshot().panel?.slider).toEqual({
-      label: 'Effort',
-      options: [{ id: 'off', label: 'Model default', active: true }],
-      disabled: true,
-    })
   })
 
   it('defers the latest model change and settles a superseded notice', async () => {
@@ -1853,6 +1800,23 @@ describe('ChatController', () => {
     await controller.submit('/tools')
     controller.dismissPanel()
     expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('shows /model as loading until models are discovered', async () => {
+    let resolveModels: (models: Awaited<ReturnType<NonNullable<ChatBackend['listModels']>>>) => void = () => {}
+    const target = backend()
+    target.listModels = () => new Promise((resolve) => (resolveModels = resolve))
+    const controller = new ChatController(target)
+
+    const opening = controller.submit('/model')
+    await vi.waitFor(() =>
+      expect(controller.getSnapshot().panel).toMatchObject({ kind: 'models', loading: true, rows: [] })
+    )
+
+    resolveModels([{ id: 'bedrock/test', name: 'Test', description: '', active: true }])
+    await opening
+    expect(controller.getSnapshot().panel).not.toHaveProperty('loading')
+    expect(controller.getSnapshot().panel?.rows).toHaveLength(1)
   })
 
   it('toggles reasoning visibility through terminal settings', async () => {

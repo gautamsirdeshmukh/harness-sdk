@@ -39,9 +39,11 @@ export function PanelItemHeader({
   const labelColor = pressed && clickable ? hover : active || pressed ? (color ?? accent) : undefined
   return (
     <Box flexShrink={1} overflow="hidden">
-      <Text {...(markerColor ? { color: markerColor } : {})} dimColor={!active && !pressed}>
-        {active && clickable ? '› ' : '  '}
-      </Text>
+      <Box flexShrink={0}>
+        <Text {...(markerColor ? { color: markerColor } : {})} dimColor={!active && !pressed}>
+          {active && clickable ? '› ' : '  '}
+        </Text>
+      </Box>
       <Text {...(labelColor ? { color: labelColor } : {})} bold={bold || (active && !pressed)} wrap={wrap}>
         {label}
       </Text>
@@ -71,17 +73,44 @@ export function PanelOverlay({
   const theme = useTheme()
   return (
     <Box position="absolute" width="100%" height="100%" alignItems="center" justifyContent="center" padding={1}>
-      <Box
-        ref={onElement}
+      <PanelFrame
         width={width}
-        {...(height === undefined ? {} : { height, overflow: 'hidden' })}
-        flexDirection="column"
-        paddingX={1}
         backgroundColor={theme.panel}
+        {...(height === undefined ? {} : { height })}
+        {...(onElement ? { onElement } : {})}
       >
         {children}
-        <PanelHelpFooter width={width - 2} />
-      </Box>
+      </PanelFrame>
+    </Box>
+  )
+}
+
+export function PanelFrame({
+  width,
+  height,
+  backgroundColor,
+  paddingX = 1,
+  children,
+  onElement,
+}: {
+  width: number
+  height?: number
+  backgroundColor?: string
+  paddingX?: number
+  children: ReactNode
+  onElement?: (element: DOMElement | null) => void
+}): ReactElement {
+  return (
+    <Box
+      ref={onElement}
+      width={width}
+      {...(height === undefined ? {} : { height, overflow: 'hidden' })}
+      flexDirection="column"
+      paddingX={paddingX}
+      {...(backgroundColor ? { backgroundColor } : {})}
+    >
+      {children}
+      <PanelHelpFooter width={Math.max(1, width - paddingX * 2)} />
     </Box>
   )
 }

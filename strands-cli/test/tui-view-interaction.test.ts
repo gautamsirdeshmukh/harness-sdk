@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest'
 import {
   agentGridCapacity,
   agentGridColumns,
+  cycleModelPanelFocus,
   filterPanelRows,
   moveAgentGridSelection,
+  moveModelPanelFocus,
   moveSelection,
   mouseScrollDirection,
   panelRowCapacity,
@@ -35,6 +37,29 @@ describe('panel helpers', () => {
     { label: 'Opus', description: 'Anthropic', filter: 'bedrock' },
     { label: 'GPT', description: 'OpenAI', filter: 'current' },
   ]
+
+  it('tabs between /model sections and leaves search for the model list', () => {
+    const panel = {
+      id: 'models',
+      kind: 'models' as const,
+      title: 'models',
+      rows: [],
+      filters: [{ id: 'all', label: 'All' }],
+    }
+    expect(cycleModelPanelFocus('providers', panel, 1)).toBe('models')
+    expect(cycleModelPanelFocus('models', panel, 1)).toBe('providers')
+    expect(cycleModelPanelFocus('search', panel, 1)).toBe('providers')
+    expect(cycleModelPanelFocus('providers', panel, -1)).toBe('models')
+
+    expect(moveModelPanelFocus('search', { downArrow: true })).toBe('models')
+    for (const focus of ['providers', 'models', 'search'] as const) {
+      expect(moveModelPanelFocus(focus, { leftArrow: true })).toBeUndefined()
+      expect(moveModelPanelFocus(focus, { rightArrow: true })).toBeUndefined()
+    }
+
+    const bare = { id: 'models', kind: 'models' as const, title: 'models', rows: [] }
+    expect(cycleModelPanelFocus('models', bare, 1)).toBe('models')
+  })
 
   it('presents the SDK Background Tasks management tool', () => {
     expect(toolAction('strands_manage_background_task')).toBe('Manage task')
@@ -97,7 +122,7 @@ describe('panel helpers', () => {
     expect(scrollAgentGridViewport(0, 1, 10, 6, 3)).toBe(3)
     expect(scrollAgentGridViewport(3, 1, 10, 6, 3)).toBe(6)
     expect(revealAgentGridSelection(8, 0, 6, 10, 3)).toBe(3)
-    expect(panelRowCapacity('models', 20)).toBe(7)
+    expect(panelRowCapacity('models', 20)).toBe(5)
     expect(panelRowCapacity('sessions', 20)).toBe(10)
     expect(panelRowCapacity('settings', 20)).toBe(5)
     expect(scrollPanelViewport(0, 1, 20, 5)).toBe(1)

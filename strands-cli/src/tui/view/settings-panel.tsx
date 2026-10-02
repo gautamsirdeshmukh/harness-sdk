@@ -141,7 +141,9 @@ export function SettingsPanel({
                 flexDirection="column"
                 {...(settings ? { width: contentWidth, alignSelf: 'center' } : {})}
               >
-                {!panel.settingsCategory && row.section && row.section !== rows[visibleIndex - 1]?.section ? (
+                {!(settings && panel.settingsCategory) &&
+                row.section &&
+                row.section !== rows[visibleIndex - 1]?.section ? (
                   <Box
                     paddingX={settings ? 0 : 1}
                     marginTop={settings ? (visibleIndex > 0 ? 2 : 1) : visibleIndex > 0 ? 1 : 0}

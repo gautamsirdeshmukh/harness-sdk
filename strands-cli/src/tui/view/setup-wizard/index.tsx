@@ -2404,7 +2404,6 @@ function SetupWizardContent({
                                   slider={reasoningSlider}
                                   width={26}
                                   compact={false}
-                                  pressed={false}
                                   focused={reasoningRowIndex === selection}
                                   onElement={(element) => {
                                     setupEffortSliderElement.current = element

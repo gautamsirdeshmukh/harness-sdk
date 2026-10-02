@@ -515,7 +515,11 @@ export class ConversationManager implements ChatControllerApi {
     this._emit()
   }
 
-  private _makePanel(kind: ChatPanel['kind'], title: string, rows: readonly ChatPanelRow[]): ChatPanel {
+  private _makePanel(
+    kind: 'voice' | 'sessions' | 'agents' | 'rename' | 'error',
+    title: string,
+    rows: readonly ChatPanelRow[]
+  ): ChatPanel {
     return {
       id: `manager-panel-${this._nextPanel++}`,
       kind,

@@ -40,12 +40,13 @@ import {
   agentGridCapacity,
   agentGridColumns,
   cycleModelPanelFocus,
+  moveModelPanelFocus,
+  panelSlider,
   cyclePanelFilter,
   detailPageSize,
   elementAtMouse,
   elementContainsMouse,
   filterPanelRows,
-  MODEL_COPY_TARGET,
   mouseScrollDirection,
   moveAgentGridSelection,
   moveSelection,
@@ -124,12 +125,10 @@ export function ChatApp({
   const [pressedPanelFilter, setPressedPanelFilter] = useState<string>()
   const [pressedPanelRow, setPressedPanelRow] = useState<number>()
   const [pressedPanelControl, setPressedPanelControl] = useState<string>()
-  const [pressedPanelSlider, setPressedPanelSlider] = useState(false)
   const [pressedSuggestion, setPressedSuggestion] = useState<number>()
   const [hoveredPanelRow, setHoveredPanelRow] = useState<number>()
   const [hoveredPanelControl, setHoveredPanelControl] = useState<string>()
   const [hoveredPanelFilter, setHoveredPanelFilter] = useState<string>()
-  const [hoveredPanelSlider, setHoveredPanelSlider] = useState(false)
   const [hoveredSuggestion, setHoveredSuggestion] = useState<number>()
   const [settingsHovered, setSettingsHovered] = useState(false)
   const [pressedQueuedPrompt, setPressedQueuedPrompt] = useState<QueuedPromptTarget>()
@@ -195,7 +194,6 @@ export function ChatApp({
     setHoveredPanelRow(undefined)
     setHoveredPanelControl(undefined)
     setHoveredPanelFilter(undefined)
-    setHoveredPanelSlider(false)
     setHoveredSuggestion(undefined)
     setSettingsHovered(false)
     setHoveredMetadata(undefined)
@@ -205,7 +203,6 @@ export function ChatApp({
     setPressedPanelFilter(undefined)
     setPressedPanelRow(undefined)
     setPressedPanelControl(undefined)
-    setPressedPanelSlider(false)
     setPressedSuggestion(undefined)
     setPressedQueuedPrompt(undefined)
   }, [])
@@ -336,16 +333,15 @@ export function ChatApp({
           ? `settings:${snapshot.panel.settingsCategory}`
           : 'all'
     )
-    setModelPanelFocus(snapshot.panel?.slider?.focused ? 'effort' : 'models')
+    setModelPanelFocus('models')
     setPressedPanelFilter(undefined)
     setPressedPanelRow(undefined)
     setPressedPanelControl(undefined)
-    setPressedPanelSlider(false)
     resetHover()
     setPressedQueuedPrompt(undefined)
     setDetailScroll(0)
     panelSliderDraggingRef.current = false
-    panelSliderValueRef.current = snapshot.panel?.slider?.options.find((option) => option.active)?.id
+    panelSliderValueRef.current = panelSlider(snapshot.panel)?.options.find((option) => option.active)?.id
   }, [snapshot.panel?.id, resetPanelPosition, resetHover])
 
   useEffect(() => {
@@ -363,9 +359,10 @@ export function ChatApp({
     }
   }, [editingQueuedPromptId, snapshot.queuedPrompts])
 
+  const activeSlider = panelSlider(snapshot.panel)
   useEffect(() => {
-    panelSliderValueRef.current = snapshot.panel?.slider?.options.find((option) => option.active)?.id
-  }, [snapshot.panel?.slider])
+    panelSliderValueRef.current = activeSlider?.options.find((option) => option.active)?.id
+  }, [activeSlider])
 
   useEffect(() => {
     setTranscriptScroll(0)
@@ -421,7 +418,8 @@ export function ChatApp({
         setPressedSuggestion(undefined)
         if (snapshot.panel?.kind === 'detail') {
           const maxScroll = maxDetailScroll(snapshot.panel, terminalWidth, terminalHeight)
-          setDetailScroll((value) => scrollDetail(value, scroll, maxScroll, snapshot.panel?.followTail === true, 3))
+          const followTail = snapshot.panel.followTail === true
+          setDetailScroll((value) => scrollDetail(value, scroll, maxScroll, followTail, 3))
         } else if (snapshot.panel?.kind === 'permission') {
           const maxScroll = maxPermissionScroll(snapshot.panel, terminalHeight, terminalWidth)
           setDetailScroll((value) => scrollDetail(value, scroll, maxScroll, false, 3))
@@ -464,7 +462,7 @@ export function ChatApp({
       const footerAction = !snapshot.panel ? elementAtMouse(footerElements, mouse) : undefined
       const panelRowIndex = snapshot.panel ? elementAtMouse(panelRowElements, mouse) : undefined
       const panelControlTarget =
-        snapshot.panel?.kind === 'settings' || snapshot.panel?.kind === 'voice' || snapshot.panel?.kind === 'models'
+        snapshot.panel?.kind === 'settings' || snapshot.panel?.kind === 'voice'
           ? elementAtMouse(panelControlElements, mouse)
           : undefined
       const panelFilterId = snapshot.panel ? elementAtMouse(panelFilterElements, mouse) : undefined
@@ -472,8 +470,7 @@ export function ChatApp({
         !snapshot.panel && suggestions.length > 0 ? elementAtMouse(suggestionElements, mouse) : undefined
       const queuedPromptTarget = !snapshot.panel ? elementAtMouse(queuedPromptElements, mouse) : undefined
       const toolGroupTarget = !snapshot.panel ? elementAtMouse(toolGroupElements, mouse) : undefined
-      const sliderElement =
-        snapshot.panel?.kind === 'models' || snapshot.panel?.kind === 'effort' ? panelSliderElement.current : undefined
+      const sliderElement = snapshot.panel?.kind === 'effort' ? panelSliderElement.current : undefined
       const sliderHit = sliderElement ? elementContainsMouse(sliderElement, mouse) : false
       const searchElement = snapshot.panel?.kind === 'models' ? panelSearchElement.current : undefined
       const searchHit = searchElement ? elementContainsMouse(searchElement, mouse) : false
@@ -485,7 +482,6 @@ export function ChatApp({
         setHoveredPanelRow(panelRowIndex)
         setHoveredPanelControl(panelControlTarget)
         setHoveredPanelFilter(panelFilterId)
-        setHoveredPanelSlider(sliderHit)
         setHoveredSuggestion(suggestionIndex)
         setSettingsHovered(footerAction === 'settings')
         setHoveredMetadata(metadataTarget)
@@ -517,19 +513,14 @@ export function ChatApp({
         setPressedPanelFilter(panelFilterId)
         setPressedPanelRow(panelRowIndex)
         setPressedPanelControl(panelControlTarget)
-        setPressedPanelSlider(sliderHit)
         setPressedSuggestion(suggestionIndex)
         setPressedQueuedPrompt(queuedPromptTarget)
-        if (sliderHit) {
-          setModelPanelFocus('effort')
-        } else if (searchHit) {
+        if (searchHit) {
           setModelPanelFocus('search')
         } else if (panelFilterId) {
           setModelPanelFocus('providers')
         } else if (panelRowIndex !== undefined) {
           setModelPanelFocus('models')
-        } else if (panelControlTarget === MODEL_COPY_TARGET) {
-          setModelPanelFocus('copy')
         }
       }
       const leftRelease = mouse.action === 'release' && leftMouseDownRef.current
@@ -552,7 +543,7 @@ export function ChatApp({
         resetPressed()
       }
       const updateSliderSelection = (): void => {
-        const slider = snapshot.panel?.slider
+        const slider = panelSlider(snapshot.panel)
         if (!sliderElement || !slider || slider.disabled) {
           return
         }
@@ -625,22 +616,15 @@ export function ChatApp({
           resetPanelPosition()
         }
       } else if (panelControlTarget) {
-        if (panelControlTarget === MODEL_COPY_TARGET) {
-          const modelId = panelRows?.[panelSelectionRef.current]?.value
-          if (modelId) {
-            copyText(modelId)
-          }
-        } else {
-          const target = parsePanelControlTarget(panelControlTarget)
-          const row = target ? panelRows?.[target.index] : undefined
-          if (!row?.value || !target) {
-            return
-          }
-          void activateRow({
-            ...row,
-            value: row.control?.kind === 'toggle' ? row.value : `${row.value}=${target.value}`,
-          })
+        const target = parsePanelControlTarget(panelControlTarget)
+        const row = target ? panelRows?.[target.index] : undefined
+        if (!row?.value || !target) {
+          return
         }
+        void activateRow({
+          ...row,
+          value: row.control?.kind === 'toggle' ? row.value : `${row.value}=${target.value}`,
+        })
       } else if (panelRowIndex !== undefined) {
         panelSelectionRef.current = panelRowIndex
         setPanelSelection(panelRowIndex)
@@ -737,7 +721,6 @@ export function ChatApp({
       resetHover()
       setPressedPanelRow(undefined)
       setPressedPanelControl(undefined)
-      setPressedPanelSlider(false)
       setPressedSuggestion(undefined)
       setPressedQueuedPrompt(undefined)
       if (key.ctrl && (character === 'c' || character === 'd')) {
@@ -773,18 +756,19 @@ export function ChatApp({
           }
           const page = detailPageSize(terminalHeight, snapshot.panel.rows.length)
           const maxScroll = maxDetailScroll(snapshot.panel, terminalWidth, terminalHeight)
+          const followTail = snapshot.panel.followTail === true
           if (key.upArrow) {
-            setDetailScroll((value) => scrollDetail(value, -1, maxScroll, snapshot.panel?.followTail === true, 1))
+            setDetailScroll((value) => scrollDetail(value, -1, maxScroll, followTail, 1))
           } else if (key.downArrow) {
-            setDetailScroll((value) => scrollDetail(value, 1, maxScroll, snapshot.panel?.followTail === true, 1))
+            setDetailScroll((value) => scrollDetail(value, 1, maxScroll, followTail, 1))
           } else if (key.pageUp) {
-            setDetailScroll((value) => scrollDetail(value, -1, maxScroll, snapshot.panel?.followTail === true, page))
+            setDetailScroll((value) => scrollDetail(value, -1, maxScroll, followTail, page))
           } else if (key.pageDown) {
-            setDetailScroll((value) => scrollDetail(value, 1, maxScroll, snapshot.panel?.followTail === true, page))
+            setDetailScroll((value) => scrollDetail(value, 1, maxScroll, followTail, page))
           } else if (key.home) {
-            setDetailScroll(snapshot.panel.followTail ? maxScroll : 0)
+            setDetailScroll(followTail ? maxScroll : 0)
           } else if (key.end) {
-            setDetailScroll(snapshot.panel.followTail ? 0 : maxScroll)
+            setDetailScroll(followTail ? 0 : maxScroll)
           }
           return
         }
@@ -836,15 +820,19 @@ export function ChatApp({
           return
         }
         if (key.escape) {
-          if (panelQuery) {
+          if (snapshot.panel.kind === 'models' && modelPanelFocus === 'search') {
+            setPanelQuery('')
+            setModelPanelFocus('models')
+            resetPanelPosition()
+          } else if (panelQuery) {
             setPanelQuery('')
           } else {
             controller.dismissPanel()
           }
           return
         }
-        const slider = snapshot.panel.slider
-        if (slider && (snapshot.panel.kind === 'effort' || modelPanelFocus === 'effort')) {
+        const slider = panelSlider(snapshot.panel)
+        if (slider && snapshot.panel.kind === 'effort') {
           // Arrow keys already apply the effort, so Enter just closes like Escape.
           if (key.return) {
             controller.dismissPanel()
@@ -863,45 +851,32 @@ export function ChatApp({
         }
         if (snapshot.panel.kind === 'models') {
           if (key.tab) {
-            setModelPanelFocus(cycleModelPanelFocus(modelPanelFocus, snapshot.panel, key.shift ? -1 : 1, true))
+            setModelPanelFocus(cycleModelPanelFocus(modelPanelFocus, snapshot.panel, key.shift ? -1 : 1))
             return
           }
-          if ((key.return || character === ' ') && modelPanelFocus === 'copy') {
-            const modelId = rows[Math.min(panelSelectionRef.current, rows.length - 1)]?.value
-            if (modelId) {
-              copyText(modelId)
-            }
+          const nextFocus = moveModelPanelFocus(modelPanelFocus, key)
+          if (nextFocus) {
+            setModelPanelFocus(nextFocus)
             return
           }
-          if (modelPanelFocus === 'providers' && snapshot.panel.filters?.length) {
-            if (key.upArrow || key.downArrow) {
-              setPanelFilter(cyclePanelFilter(snapshot.panel.filters, panelFilter, key.upArrow ? -1 : 1))
-              resetPanelPosition()
-              return
-            }
-            if (key.rightArrow) {
-              setModelPanelFocus('models')
-              return
-            }
+          if (modelPanelFocus === 'search' && key.return) {
+            setModelPanelFocus('models')
+            return
+          }
+          if (modelPanelFocus === 'providers' && snapshot.panel.filters?.length && (key.upArrow || key.downArrow)) {
+            setPanelFilter(cyclePanelFilter(snapshot.panel.filters, panelFilter, key.upArrow ? -1 : 1))
+            resetPanelPosition()
+            return
           }
           if (modelPanelFocus === 'models') {
             const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
             if (key.return && selected?.value) {
-              // Choosing a model moves on to its effort; a failed switch leaves its error panel open.
               void activateRow(selected).then((switched) => {
-                const panel = controller.getSnapshot().panel
-                if (!switched || panel?.kind !== 'models') return
-                if (panel.slider && !panel.slider.disabled) setModelPanelFocus('effort')
-                else controller.dismissPanel()
+                const next = controller.getSnapshot().panel
+                if (switched && next?.kind === 'models') {
+                  controller.dismissPanel()
+                }
               })
-              return
-            }
-            if (key.leftArrow && snapshot.panel.filters?.length) {
-              setModelPanelFocus('providers')
-              return
-            }
-            if (key.rightArrow) {
-              setModelPanelFocus('copy')
               return
             }
             const nextSelection = moveSelection(panelSelectionRef.current, key, rows.length, rowCapacity)
@@ -910,41 +885,28 @@ export function ChatApp({
               return
             }
           }
-          if (modelPanelFocus === 'copy' && key.leftArrow) {
-            setModelPanelFocus('models')
-            return
-          }
-          if (modelPanelFocus === 'search') {
-            if (key.downArrow) {
-              setModelPanelFocus('models')
-              return
-            }
-            if (key.upArrow && snapshot.panel.slider) {
-              setModelPanelFocus('effort')
-              return
-            }
-          }
-          if (key.backspace || key.delete || character === '\u007f') {
-            setModelPanelFocus('search')
+          if (modelPanelFocus === 'search' && (key.backspace || key.delete || character === '\u007f')) {
             setPanelQuery(graphemes(panelQuery).slice(0, -1).join(''))
             resetPanelPosition()
             return
           }
-          if (key.ctrl && character === 'u') {
-            setModelPanelFocus('search')
+          if (modelPanelFocus === 'search' && key.ctrl && character === 'u') {
             setPanelQuery('')
             resetPanelPosition()
             return
           }
-          if (!key.ctrl && !key.meta && !key.super && character) {
+          if (modelPanelFocus === 'models' && character === '/') {
+            setModelPanelFocus('search')
+            return
+          }
+          if (modelPanelFocus === 'search' && !key.ctrl && !key.meta && !key.super && character) {
             const clean = sanitizeTerminalText(character).replaceAll('\n', '')
             if (clean) {
-              setModelPanelFocus('search')
               setPanelQuery((query) => query + clean)
               resetPanelPosition()
-              return
             }
           }
+          return
         }
         if (
           key.tab &&
@@ -1236,11 +1198,9 @@ export function ChatApp({
       {...(pressedPanelRow !== undefined ? { pressedPanelRow } : {})}
       {...(pressedPanelControl ? { pressedPanelControl } : {})}
       {...(hoveredPanelControl ? { hoveredPanelControl } : {})}
-      pressedPanelSlider={pressedPanelSlider}
       {...(pressedSuggestion !== undefined ? { pressedSuggestion } : {})}
       {...(hoveredPanelRow !== undefined ? { hoveredPanelRow } : {})}
       {...(hoveredPanelFilter ? { hoveredPanelFilter } : {})}
-      hoveredPanelSlider={hoveredPanelSlider}
       {...(hoveredSuggestion !== undefined ? { hoveredSuggestion } : {})}
       {...(pressedQueuedPrompt ? { pressedQueuedPrompt } : {})}
       {...(editingQueuedPromptId ? { editingQueuedPromptId } : {})}
