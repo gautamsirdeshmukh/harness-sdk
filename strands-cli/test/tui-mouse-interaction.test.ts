@@ -16,7 +16,7 @@ afterEach(() => {
 })
 
 describe('TUI mouse input', () => {
-  it.each([80, 60])('traverses Color mode and inline Theme segments at %i columns', async (width) => {
+  it.each([80, 60])('traverses inline Theme segments at %i columns', async (width) => {
     const input = ttyInput()
     const output = ttyOutput(width, 30)
     const frame = captureFrame(output)
@@ -37,21 +37,7 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ settingsCategory: 'Appearance' }))
 
     input.write('\u001b[C')
-    await vi.waitFor(() => expect(controller.getSnapshot().settings.colorMode).toBe('light'))
-    input.write('\u001b[B')
-    await instance.waitUntilRenderFlush()
-    input.write('\u001b[C')
-    if (width === 80) {
-      await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
-      input.write('\u001b[B')
-      await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('kikker'))
-    } else {
-      await vi.waitFor(() => expect(controller.getSnapshot().settings.colorMode).toBe('dark'))
-      input.write('\u001b[B')
-      await instance.waitUntilRenderFlush()
-      input.write('\u001b[C')
-      await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
-    }
+    await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
     expect(frame().join('\n')).not.toContain('Choose a theme')
   })
 
@@ -321,10 +307,14 @@ describe('TUI mouse input', () => {
     expect(target.switchModel).not.toHaveBeenCalled()
   })
 
-  it('activates model search with slash and closes after choosing a result', async () => {
+  it('copies a hovered model, then searches and chooses a result', async () => {
     const input = ttyInput()
-    const output = ttyOutput(80, 30)
+    const output = ttyOutput(120, 30)
     const frame = captureFrame(output)
+    let rawOutput = ''
+    output.on('data', (chunk: Buffer) => {
+      rawOutput += chunk.toString()
+    })
     const target = backend()
     target.listModels = () => [
       { id: 'model-00', name: 'Model 00', description: '', active: true },
@@ -346,6 +336,14 @@ describe('TUI mouse input', () => {
     instances.push(instance)
     await controller.submit('/model')
     await instance.waitUntilRenderFlush()
+
+    const hovered = findText(frame(), 'Model 01')
+    input.write(mouseInputSequence(32, hovered.column, hovered.row, 'M'))
+    await instance.waitUntilRenderFlush()
+    expect(frame().join('\n')).toContain('model-01')
+    rawOutput = ''
+    input.write('\u0019')
+    await vi.waitFor(() => expect(rawOutput).toContain('\u001b]52;c;bW9kZWwtMDE=\u001b\\'))
 
     input.write('1')
     await instance.waitUntilRenderFlush()
@@ -392,17 +390,10 @@ describe('TUI mouse input', () => {
     }
 
     const panelId = controller.getSnapshot().panel?.id
-    const light = findText(frame(), 'Light')
-    input.write(mouseInputSequence(0, light.column, light.row, 'M'))
-    input.write(mouseInputSequence(3, light.column, light.row, 'm'))
-    await vi.waitFor(() => expect(controller.getSnapshot().settings.colorMode).toBe('light'))
-    expect(controller.getSnapshot().panel?.id).toBe(panelId)
-
     const kikker = findText(frame(), 'Kikker')
     input.write(mouseInputSequence(0, kikker.column, kikker.row, 'M'))
     input.write(mouseInputSequence(3, kikker.column, kikker.row, 'm'))
     await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('kikker'))
-    expect(controller.getSnapshot().settings.colorMode).toBe('light')
     expect(controller.getSnapshot().panel?.id).toBe(panelId)
 
     const custom = findText(frame(), 'Custom')

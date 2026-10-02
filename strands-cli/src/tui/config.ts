@@ -113,7 +113,9 @@ export class CliConfigStore {
 
   static async load(path = userDirectory('config.json')): Promise<CliConfigStore> {
     const loadedDocument = await readConfigDocument(path)
-    const document = withoutProviderCredentials(loadedDocument)
+    const sanitizedDocument = withoutProviderCredentials(loadedDocument)
+    const settings = parseSettings(sanitizedDocument.settings, path)
+    const document = withoutLegacyAppearanceSettings(sanitizedDocument, settings)
     const store = new CliConfigStore(
       path,
       document,
@@ -122,7 +124,7 @@ export class CliConfigStore {
       parseProviderEnvironment(document.providers, path),
       parseProfile(document.profile, path),
       parsePermissions(document.permissions, path),
-      parseSettings(document.settings, path)
+      settings
     )
     if (document !== loadedDocument) {
       await writeConfigDocument(path, document)
@@ -545,6 +547,27 @@ function withoutProviderCredentials(document: ConfigDocument): ConfigDocument {
         },
       }
     : document
+}
+
+function withoutLegacyAppearanceSettings(document: ConfigDocument, settings: ChatSettings): ConfigDocument {
+  if (!isRecord(document.settings)) {
+    return document
+  }
+  const storedCustomTheme = document.settings.customTheme
+  const customThemeChanged =
+    storedCustomTheme !== undefined && JSON.stringify(storedCustomTheme) !== JSON.stringify(settings.customTheme)
+  if (!('colorMode' in document.settings) && !customThemeChanged) {
+    return document
+  }
+  const storedSettings = { ...document.settings }
+  delete storedSettings.colorMode
+  return {
+    ...document,
+    settings: {
+      ...storedSettings,
+      ...(storedCustomTheme === undefined ? {} : { customTheme: settings.customTheme }),
+    },
+  }
 }
 
 function requiredText(value: unknown, field: string): string {

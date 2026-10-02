@@ -8,6 +8,7 @@ import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
 import { createInkOutputs, enterAlternateScreen } from './terminal/terminal.js'
+import { observeTerminalColorMode } from './view/theme-detection.js'
 
 interface RunInkChatOptions {
   firstRequest?: string
@@ -48,6 +49,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
   const errorOutput = options.errorOutput ?? process.stderr
+  const terminalTheme = observeTerminalColorMode(input, output)
+  await terminalTheme.ready
   const alternateScreen = options.alternateScreen !== false
   const inkOutputs = createInkOutputs(output, errorOutput, alternateScreen)
   let leaveTerminalMode = (): void => {}
@@ -201,7 +204,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     }
     if (alternateScreen) leaveTerminalMode = enterAlternateScreen(output)
     instance = renderApp(chatRoot(), {
-      stdin: input,
+      stdin: terminalTheme.input,
       ...inkOutputs,
       exitOnCtrlC: false,
       patchConsole: true,
@@ -266,6 +269,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     instance?.unmount()
     instance?.cleanup()
     leaveTerminalMode()
+    terminalTheme.dispose()
 
     const hardExitCode = controller?.hardExitCode
     if (hardExitCode !== undefined) {

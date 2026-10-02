@@ -17,7 +17,6 @@ export {
   THEME_COLOR_KEYS,
   type ChatSettings,
   type FrogTheme,
-  type ColorMode,
   type ResolvedColorMode,
   type ThemeColors,
   type CustomTheme,

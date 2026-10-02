@@ -1276,6 +1276,33 @@ describe('ChatController', () => {
     expect(target.listEfforts).not.toHaveBeenCalled()
   })
 
+  it('continues to effort after selecting a model that supports it', async () => {
+    const target = backend()
+    let model = 'bedrock/current-model'
+    target.info = () => ({ model, effort: 'Low' })
+    target.listModels = () => [
+      { id: model, name: 'Current Model', description: '', active: true },
+      { id: 'bedrock/next-model', name: 'Next Model', description: '' },
+    ]
+    target.listEfforts = () => [
+      { id: 'low', label: 'Low', active: true },
+      { id: 'high', label: 'High' },
+    ]
+    target.switchModel = vi.fn(async (selected) => {
+      model = selected
+      return selected
+    })
+    const controller = new ChatController(target)
+
+    await controller.openModelPanel()
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
+
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'effort',
+      body: 'bedrock/next-model\nbedrock/next-model',
+    })
+  })
+
   it('sets effort from /effort and opens an effort-only panel without an argument', async () => {
     const target = backend()
     let effort = 'high'
@@ -1851,7 +1878,7 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().completedTurns).toEqual([])
     requestSetup.mockClear()
     await controller.submit('/settings')
-    await controller.activatePanelRow({ label: '', description: '', value: 'colorMode=light' })
+    await controller.activatePanelRow({ label: '', description: '', value: 'frogTheme=minimal' })
     await controller.activatePanelRow({ label: '', description: '', value: 'settings:General' })
     const rows = controller.getSnapshot().panel?.rows ?? []
     expect(rows.map(({ value }) => value)).toEqual(['telemetry'])

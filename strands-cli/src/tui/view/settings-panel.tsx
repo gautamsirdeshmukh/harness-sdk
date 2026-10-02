@@ -32,7 +32,7 @@ export function SettingsPanel({
   hoveredControl?: string
   pressedFilter?: string
   hoveredFilter?: string
-  appearance?: Pick<ChatSettings, 'frogTheme' | 'colorMode' | 'customTheme'>
+  appearance?: Pick<ChatSettings, 'frogTheme' | 'customTheme'>
   embedded?: boolean
   height?: number
   onControlElement?: (key: string, element: DOMElement | null) => void
@@ -262,7 +262,7 @@ export function SettingsControl({
   control: NonNullable<ChatPanelRow['control']>
   rowIndex: number
   setting?: string
-  appearance?: Pick<ChatSettings, 'frogTheme' | 'colorMode' | 'customTheme'>
+  appearance?: Pick<ChatSettings, 'frogTheme' | 'customTheme'>
   spacious?: boolean
   columns?: number
   optionWidth?: number
@@ -387,7 +387,7 @@ function ThemeChoices({
   optionWidth: number
   optionHeight?: number
   maxRows?: number
-  appearance?: Pick<ChatSettings, 'frogTheme' | 'colorMode' | 'customTheme'>
+  appearance?: Pick<ChatSettings, 'frogTheme' | 'customTheme'>
   pressedControl?: string
   hoveredControl?: string
   onControlElement?: (key: string, element: DOMElement | null) => void
@@ -409,7 +409,6 @@ function ThemeChoices({
         const preview = getTheme(
           {
             frogTheme: option.value as FrogTheme,
-            colorMode: current.mode,
             customTheme: appearance?.customTheme ?? DEFAULT_CHAT_SETTINGS.customTheme,
           },
           current.mode

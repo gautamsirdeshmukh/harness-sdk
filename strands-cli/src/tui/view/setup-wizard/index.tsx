@@ -1996,14 +1996,7 @@ function SetupWizardContent({
   ) : null
 
   return (
-    <Box
-      width={width}
-      height={height}
-      paddingX={1}
-      flexDirection="column"
-      overflow="hidden"
-      backgroundColor={palette.canvas}
-    >
+    <Box width={width} height={height} paddingX={1} flexDirection="column" overflow="hidden">
       {showBrand ? (
         <SetupBrand
           frame={brandFrame}

@@ -64,6 +64,7 @@ export function PanelContainer({
   height,
   inline = false,
   paddingX = 1,
+  footerModelId,
   children,
   onElement,
 }: {
@@ -71,6 +72,7 @@ export function PanelContainer({
   height?: number
   inline?: boolean
   paddingX?: number
+  footerModelId?: string
   children: ReactNode
   onElement?: (element: DOMElement | null) => void
 }): ReactElement {
@@ -85,7 +87,10 @@ export function PanelContainer({
       {...(inline ? {} : { backgroundColor: theme.panel })}
     >
       {children}
-      <PanelHelpFooter width={Math.max(1, width - paddingX * 2)} />
+      <PanelHelpFooter
+        width={Math.max(1, width - paddingX * 2)}
+        {...(footerModelId ? { modelId: footerModelId } : {})}
+      />
     </Box>
   )
   return inline ? (

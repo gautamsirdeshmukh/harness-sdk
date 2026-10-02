@@ -19,20 +19,32 @@ async function configPath(): Promise<string> {
 }
 
 describe('appearance persistence', () => {
-  it('round-trips custom colors and color mode without changing permission policy or unrelated settings', async () => {
+  it('round-trips custom accent and frog colors without changing permission policy or unrelated settings', async () => {
     const path = await configPath()
     const permissions = { mode: 'default', allow: ['read'], futureSetting: true }
-    await writeFile(path, JSON.stringify({ permissions, settings: { animations: false, futureSetting: true } }))
+    await writeFile(
+      path,
+      JSON.stringify({
+        permissions,
+        settings: {
+          animations: false,
+          futureSetting: true,
+          colorMode: 'light',
+          customTheme: { base: 'green', light: { accent: '#123456', background: '#ffffff' }, dark: {} },
+        },
+      })
+    )
     const config = await CliConfigStore.load(path)
+    const migrated = JSON.parse(await readFile(path, 'utf8'))
+    expect(migrated.settings).not.toHaveProperty('colorMode')
+    expect(migrated.settings.customTheme.light).toEqual({ accent: '#123456' })
     await config.setSettings({
       frogTheme: 'custom',
-      colorMode: 'light',
       customTheme: { base: 'merlin', light: { accent: '#ABCDEF' }, dark: { frog: '#123ABC' } },
     })
 
     const expected = {
       frogTheme: 'custom',
-      colorMode: 'light',
       customTheme: { base: 'merlin', light: { accent: '#abcdef' }, dark: { frog: '#123abc' } },
       animations: false,
     }

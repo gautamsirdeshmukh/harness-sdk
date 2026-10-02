@@ -231,6 +231,7 @@ export function ResourcePanel({
         height={height}
         inline
         paddingX={0}
+        {...(allRows[hoveredRow ?? selected]?.value ? { footerModelId: allRows[hoveredRow ?? selected]!.value } : {})}
         {...(onPanelElement ? { onElement: onPanelElement } : {})}
       >
         <ModelPicker

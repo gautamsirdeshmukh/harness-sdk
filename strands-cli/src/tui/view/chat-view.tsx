@@ -146,7 +146,7 @@ function ChatViewContent({
   clipboardNotice?: { status: 'success'; characterCount: number } | { status: 'error' }
   party?: boolean
 }): ReactElement {
-  const { background, canvas } = useTheme()
+  const { background } = useTheme()
   const resolvedCommandAssistance =
     commandAssistance ??
     (suggestions === undefined ? commandAssistanceForInput(input, actionableCommandToken) : undefined)
@@ -269,7 +269,6 @@ function ChatViewContent({
       paddingX={1}
       overflow="hidden"
       position="relative"
-      backgroundColor={canvas}
     >
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         {hasActivity ? (

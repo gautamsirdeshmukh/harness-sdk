@@ -207,6 +207,7 @@ describe('ChatView', () => {
       if (width >= 40) {
         expect(after[panelRow]).toContain('Test Model')
         expect(after.join('\n')).toContain('Enter done · Esc close')
+        expect(after.join('\n')).not.toContain('copy ID')
         expect(after.slice(0, panelRow).join('\n')).toContain('Visible conversation')
       }
       expect(after.findIndex((line) => line.includes('/work'))).toBe(before.findIndex((line) => line.includes('/work')))
@@ -1023,7 +1024,7 @@ describe('ChatView', () => {
   it.each([40, 80])(
     'keeps settings controls and their hints visible at %sx24 for first and last selections',
     (width) => {
-      const config = { ...DEFAULT_CHAT_SETTINGS, colorMode: 'light' as const }
+      const config = DEFAULT_CHAT_SETTINGS
       const rows = settingsRows(config, 'Appearance')
       const capacity = panelRowCapacity('settings', 24, width, rows)
       for (const selected of [0, rows.length - 1]) {
@@ -1049,7 +1050,7 @@ describe('ChatView', () => {
         const lines = output.split('\n')
         expect(lines.length).toBeLessThanOrEqual(24)
         expect(output).toContain(rows[selected]!.label)
-        expect(output).toContain(selected === 0 ? 'Dark' : 'Full')
+        expect(output).toContain(selected === 0 ? 'Custom' : 'Full')
         expect(output).toContain('←→ change')
         expect(output).toContain('Esc back')
         expect(output).not.toContain('/help')
@@ -1278,7 +1279,8 @@ describe('ChatView', () => {
     expect(wideLines[modelRow]).toContain('› Current Model')
     expect(wide).not.toContain('Effort')
     expect(wide).not.toContain('Web search')
-    expect(wide).not.toContain('Copy ID')
+    expect(wide).toContain('bedrock/current-model')
+    expect(wide).toContain('Ctrl+Y copy ID')
 
     const topBorder = wideLines.find((line) => line.match(/┌.*┐┌.*┐/u))
     expect(topBorder).toBeDefined()

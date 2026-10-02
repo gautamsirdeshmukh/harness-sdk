@@ -24,8 +24,7 @@ export const FROG_THEME_LABELS: Record<FrogTheme, string> = {
   custom: 'Custom',
 }
 
-export type ColorMode = 'auto' | 'light' | 'dark'
-export type ResolvedColorMode = Exclude<ColorMode, 'auto'>
+export type ResolvedColorMode = 'light' | 'dark'
 
 export const SETTINGS_CATEGORIES = [
   {
@@ -67,10 +66,13 @@ export const THEME_COLOR_KEYS = [
   'frog',
 ] as const
 
+const CUSTOM_THEME_COLOR_KEYS = ['accent', 'frog'] as const
+type CustomThemeColors = Partial<Pick<ThemeColors, (typeof CUSTOM_THEME_COLOR_KEYS)[number]>>
+
 export interface CustomTheme {
   base: Exclude<FrogTheme, 'custom'>
-  light: Partial<ThemeColors>
-  dark: Partial<ThemeColors>
+  light: CustomThemeColors
+  dark: CustomThemeColors
 }
 
 export interface ChatSettings {
@@ -79,7 +81,6 @@ export interface ChatSettings {
   showReasoning: boolean
   toolOutput: 'hidden' | 'compact' | 'full'
   frogTheme: FrogTheme
-  colorMode: ColorMode
   customTheme: CustomTheme
   /** Load MCP servers configured for other tools (Claude Code, Kiro, Gemini CLI, Codex). */
   mcpDiscovery: boolean
@@ -97,7 +98,6 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   showReasoning: true,
   toolOutput: 'compact',
   frogTheme: 'green',
-  colorMode: 'auto',
   customTheme: { base: 'green', light: {}, dark: {} },
   mcpDiscovery: false,
   skillDiscovery: false,
@@ -106,7 +106,6 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
 }
 
 export type SettingKey =
-  | 'colorMode'
   | 'frogTheme'
   | 'transcriptSpacing'
   | 'animations'
@@ -126,17 +125,6 @@ export interface SettingDefinition {
 }
 
 export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
-  {
-    key: 'colorMode',
-    label: 'Color mode',
-    section: 'Appearance',
-    control: 'segmented',
-    options: [
-      { label: 'Auto', value: 'auto' },
-      { label: 'Light', value: 'light' },
-      { label: 'Dark', value: 'dark' },
-    ],
-  },
   {
     key: 'frogTheme',
     label: 'Theme',
@@ -291,10 +279,6 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
   if (frogTheme === undefined) {
     throw new Error(`Invalid CLI config at ${path}: settings.frogTheme must be one of ${FROG_THEMES.join(', ')}`)
   }
-  const colorMode = value.colorMode ?? DEFAULT_CHAT_SETTINGS.colorMode
-  if (colorMode !== 'auto' && colorMode !== 'light' && colorMode !== 'dark') {
-    throw new Error(`Invalid CLI config at ${path}: settings.colorMode must be "auto", "light", or "dark"`)
-  }
   const customTheme = parseCustomTheme(value.customTheme, path)
 
   return {
@@ -303,7 +287,6 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     showReasoning,
     toolOutput,
     frogTheme,
-    colorMode,
     customTheme,
     mcpDiscovery: booleanSetting('mcpDiscovery'),
     skillDiscovery: booleanSetting('skillDiscovery'),
@@ -324,13 +307,13 @@ function parseCustomTheme(value: unknown, path: string): CustomTheme {
   ) {
     throw new Error(`Invalid CLI config at ${path}: customTheme.base must name a preset theme`)
   }
-  const colors = (mode: 'light' | 'dark'): Partial<ThemeColors> => {
+  const colors = (mode: ResolvedColorMode): CustomThemeColors => {
     const candidate = value[mode] ?? {}
     if (!isRecord(candidate)) {
       throw new Error(`Invalid CLI config at ${path}: customTheme.${mode} must be an object`)
     }
-    const result: Partial<ThemeColors> = {}
-    for (const key of THEME_COLOR_KEYS) {
+    const result: CustomThemeColors = {}
+    for (const key of CUSTOM_THEME_COLOR_KEYS) {
       const color = candidate[key]
       if (color === undefined) continue
       if (typeof color !== 'string' || !/^#[\da-f]{6}$/iu.test(color)) {
@@ -349,11 +332,6 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     return undefined
   }
   switch (name) {
-    case 'colorMode':
-      if (selected !== 'auto' && selected !== 'light' && selected !== 'dark') {
-        return undefined
-      }
-      return { colorMode: selected }
     case 'customTheme': {
       let theme: unknown
       try {
@@ -375,7 +353,7 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
           !isRecord(colors) ||
           Object.entries(colors).some(
             ([key, color]) =>
-              !THEME_COLOR_KEYS.includes(key as (typeof THEME_COLOR_KEYS)[number]) ||
+              !CUSTOM_THEME_COLOR_KEYS.includes(key as (typeof CUSTOM_THEME_COLOR_KEYS)[number]) ||
               typeof color !== 'string' ||
               !/^#[\da-f]{6}$/iu.test(color)
           )

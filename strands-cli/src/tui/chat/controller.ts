@@ -877,6 +877,7 @@ export class ChatController implements ChatControllerApi {
       this._context = {}
       this._refreshRuntime(typeof selected === 'string' ? selected : modelId)
       this._updateOpenModelPanel(modelId)
+      this._openEffortPanelIfAvailable()
       this._emit()
       return true
     } catch (error) {
@@ -1117,10 +1118,16 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openEffortPanel(): void {
+    if (this._openEffortPanelIfAvailable()) {
+      return
+    }
+    this._openError('effort unavailable', this._runtime.model, 'This model does not support reasoning effort.')
+  }
+
+  private _openEffortPanelIfAvailable(): boolean {
     const slider = effortSlider(this._backend.listEfforts?.() ?? [])
     if (!slider || slider.disabled) {
-      this._openError('effort unavailable', this._runtime.model, 'This model does not support reasoning effort.')
-      return
+      return false
     }
     this._openPanel({
       kind: 'effort',
@@ -1129,6 +1136,7 @@ export class ChatController implements ChatControllerApi {
       slider,
       body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
     })
+    return true
   }
 
   async openModelPanel(): Promise<void> {
@@ -1192,6 +1200,7 @@ export class ChatController implements ChatControllerApi {
         this._addNotice('delivered', `Model updated for the next model call: ${modelDisplayName(modelId)}`)
       }
       this._updateOpenModelPanel(modelId)
+      this._openEffortPanelIfAvailable()
       this._emit()
       return true
     } catch (error) {
@@ -2076,6 +2085,7 @@ export class ChatController implements ChatControllerApi {
         notice.status = 'delivered'
         notice.text = `Model changed to ${modelDisplayName(modelId)}`
       }
+      this._openEffortPanelIfAvailable()
     } catch (error) {
       if (notice) {
         notice.status = 'error'

@@ -33,6 +33,7 @@ import {
 import { copyTerminalText, setTerminalMouseMotion } from '../terminal/terminal.js'
 import { openExternalUrl } from '../terminal/open-url.js'
 import { ChatView, type QueuedPromptAction, type QueuedPromptTarget } from './chat-view.js'
+import { panelModelId } from './help-footer.js'
 import {
   activateMetadataTarget,
   adjacentSettingOption,
@@ -716,6 +717,7 @@ export function ChatApp({
         handleMouse(mouse)
         return
       }
+      const hoveredRow = hoveredPanelRow
       selectionDragRef.current = undefined
       setScreenSelection([])
       resetHover()
@@ -829,6 +831,11 @@ export function ChatApp({
           } else {
             controller.dismissPanel()
           }
+          return
+        }
+        const copyableModelId = panelModelId(snapshot.panel, rows[hoveredRow ?? panelSelectionRef.current])
+        if (copyableModelId && key.ctrl && !key.meta && !key.super && character.toLowerCase() === 'y') {
+          copyText(copyableModelId)
           return
         }
         const slider = panelSlider(snapshot.panel)
@@ -1142,10 +1149,12 @@ export function ChatApp({
       activateRow,
       appearanceOpen,
       controller,
+      copyText,
       dispatchPrompt,
       editingQueuedPromptId,
       frog,
       handleMouse,
+      hoveredPanelRow,
       resetHover,
       resetPanelPosition,
       selectPanelRow,

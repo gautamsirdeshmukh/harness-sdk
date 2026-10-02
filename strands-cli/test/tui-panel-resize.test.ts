@@ -51,7 +51,7 @@ function createController() {
     setEffort,
   }
   const controller = new ChatController(backend, {
-    settings: { animations: false, colorMode: 'light' },
+    settings: { animations: false },
     runtime: { model: 'model-00', cwd: '/work' },
   })
   return { controller, switchModel, setEffort }
@@ -161,7 +161,7 @@ describe('mounted panel resizing', () => {
       await vi.waitFor(() => {
         view.fits()
         expect(view.screen()).toContain('Model 08')
-        expect(view.screen()).toContain('Esc back')
+        expect(view.screen()).toMatch(/Enter(?: choose)? · Esc(?: back)?/)
         expect(view.screen()).not.toContain('/help')
       })
     }
