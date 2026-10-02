@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 
-import { PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
+import { PanelContainer, PanelTitle, type PanelRowsProps } from './panel-components.js'
 import { Box, Text, useTheme } from './theme.js'
 
 export function AgentsPanel({
@@ -26,7 +26,7 @@ export function AgentsPanel({
   const tileWidth = Math.floor((gridWidth - tileGap * (columns - 1)) / columns)
   const compact = height < 14
   return (
-    <PanelOverlay width={width} height={height} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+    <PanelContainer width={width} height={height} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
       <Box flexDirection="column" overflow="hidden">
         <Box paddingX={1} justifyContent="space-between">
           <PanelTitle title={panel.title} color={accent} />
@@ -96,6 +96,6 @@ export function AgentsPanel({
           })}
         </Box>
       </Box>
-    </PanelOverlay>
+    </PanelContainer>
   )
 }

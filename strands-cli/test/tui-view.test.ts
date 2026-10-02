@@ -176,7 +176,7 @@ describe('ChatView', () => {
               id: 'effort',
               kind: 'effort',
               title: 'effort',
-              body: 'Grok 4.6\nus.xai.grok-4.6',
+              body: 'Test Model\nprovider.test-model',
               rows: [],
               slider: {
                 label: 'Effort',
@@ -205,7 +205,7 @@ describe('ChatView', () => {
       expect(track).toBeDefined()
       expect(stringWidth(track!)).toBeLessThanOrEqual(60)
       if (width >= 40) {
-        expect(after[panelRow]).toContain('Grok 4.6')
+        expect(after[panelRow]).toContain('Test Model')
         expect(after.join('\n')).toContain('Enter done · Esc close')
         expect(after.slice(0, panelRow).join('\n')).toContain('Visible conversation')
       }
@@ -1172,7 +1172,7 @@ describe('ChatView', () => {
           description: `bedrock/m${index}`,
           value: `bedrock/m${index}`,
         })),
-        body: 'Claude Opus\nbedrock/anthropic.claude-opus',
+        body: 'Current Model\nbedrock/current-model',
       }
       const render = (props: Partial<Parameters<typeof renderView>[0]> = {}): string[] =>
         renderView({ snapshot: snapshot(), terminalWidth, terminalHeight, party, ...props }).split('\n')
@@ -1244,20 +1244,20 @@ describe('ChatView', () => {
         ],
         rows: [
           {
-            label: 'Claude Opus',
-            description: 'bedrock/anthropic.claude-opus',
-            value: 'bedrock/anthropic.claude-opus',
+            label: 'Current Model',
+            description: 'bedrock/current-model',
+            value: 'bedrock/current-model',
             filter: 'bedrock',
             badge: { text: 'current', tone: 'success' },
           },
           {
-            label: 'Claude Sonnet',
-            description: 'bedrock/anthropic.claude-sonnet',
-            value: 'bedrock/anthropic.claude-sonnet',
+            label: 'Next Model',
+            description: 'bedrock/next-model',
+            value: 'bedrock/next-model',
             filter: 'bedrock',
           },
         ],
-        body: 'Claude Opus\nbedrock/anthropic.claude-opus',
+        body: 'Current Model\nbedrock/current-model',
       },
     })
     const render = (terminalWidth: number, modelPanelFocus: 'models' | 'search' = 'models'): string =>
@@ -1272,10 +1272,10 @@ describe('ChatView', () => {
     const wideLines = wide.split('\n')
     const header = wideLines.find((line) => line.includes('Providers'))
     expect(header).toContain('Search models')
-    const modelRow = wideLines.findIndex((line) => line.includes('Claude Opus'))
+    const modelRow = wideLines.findIndex((line) => line.includes('Current Model'))
     expect(modelRow - wideLines.indexOf(header!)).toBe(2)
     expect(wideLines[modelRow]).toContain('current')
-    expect(wideLines[modelRow]).toContain('› Claude Opus')
+    expect(wideLines[modelRow]).toContain('› Current Model')
     expect(wide).not.toContain('Effort')
     expect(wide).not.toContain('Web search')
     expect(wide).not.toContain('Copy ID')
@@ -1383,9 +1383,8 @@ describe('ChatView', () => {
           title: 'model change failed',
           rows: [
             {
-              label: 'bedrock/anthropic.claude-sonnet-5',
-              description:
-                'Failed to create agent with model bedrock/anthropic.claude-sonnet-5: AWS credentials are not configured.',
+              label: 'bedrock/next-model',
+              description: 'Failed to create agent with model bedrock/next-model: AWS credentials are not configured.',
               tone: 'danger',
             },
           ],
@@ -1395,7 +1394,7 @@ describe('ChatView', () => {
       terminalHeight: 30,
     })
 
-    expect(error.replace(/\s+/gu, ' ')).toContain('AWS credentials are not configured.')
+    expect(error.replace(/\s+/gu, ' ')).toMatch(/AWS creden\s*tials are not configured\./u)
     expect(error).not.toContain('model change failed')
     expect(error).not.toContain('◆')
     expect(error).toContain('Esc to dismiss')

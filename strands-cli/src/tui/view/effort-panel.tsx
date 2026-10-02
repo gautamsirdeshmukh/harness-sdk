@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 import stringWidth from 'string-width'
 
-import type { ChatPanel } from '../chat/types.js'
+import type { ChatEffortPanel } from '../chat/types.js'
 import { PanelHelpFooter } from './help-footer.js'
 import { EffortSlider } from './model-panel.js'
 import { Box, Text, useTheme } from './theme.js'
@@ -13,7 +13,7 @@ export function EffortPanel({
   onElement,
   onSliderElement,
 }: {
-  panel: ChatPanel & { kind: 'effort' }
+  panel: ChatEffortPanel
   width: number
   onElement?: (element: DOMElement | null) => void
   onSliderElement?: (element: DOMElement | null) => void

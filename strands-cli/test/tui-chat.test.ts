@@ -1142,15 +1142,15 @@ describe('ChatController', () => {
 
   it.each([true, false])('shows all built-in provider filters when discovery returns models: %s', async (hasModels) => {
     const target = backend()
-    target.info = () => ({ model: 'bedrock/anthropic.claude-current' })
+    target.info = () => ({ model: 'bedrock/current-model' })
     target.listModels = vi.fn(() =>
       hasModels
         ? [
             {
-              id: 'anthropic.claude-current',
+              id: 'current-model',
               name: 'Current model',
               description: '',
-              value: 'bedrock/anthropic.claude-current',
+              value: 'bedrock/current-model',
               catalog: 'bedrock',
               active: true,
             },
@@ -1174,7 +1174,7 @@ describe('ChatController', () => {
     ])
     expect(panel.rows).toHaveLength(1)
     expect(panel.rows.flatMap((row) => (row.value ? [row.value] : []))).toEqual(
-      hasModels ? ['bedrock/anthropic.claude-current'] : []
+      hasModels ? ['bedrock/current-model'] : []
     )
     expect(target.listModels).toHaveBeenCalledOnce()
   })
@@ -1207,13 +1207,13 @@ describe('ChatController', () => {
         context: { currentTokens: 800, projectedTokens: 850, contextWindow: 200_000 },
       }
     })
-    const currentId = 'global.anthropic.claude-opus-4-8'
-    const nextId = 'bedrock/anthropic.claude-sonnet-5'
+    const currentId = 'bedrock/current-model'
+    const nextId = 'bedrock/next-model'
     let currentModel = currentId
     target.info = () => ({ model: currentModel })
     target.listModels = () => [
-      { id: currentId, name: 'Claude Opus 4.8', description: 'current', active: true },
-      { id: nextId, name: 'Claude Sonnet 5', description: 'other family' },
+      { id: currentId, name: 'Current Model', description: 'current', active: true },
+      { id: nextId, name: 'Next Model', description: 'other model' },
     ]
     target.modelChangeMode = () => 'restart'
     target.switchModel = vi.fn()
@@ -1228,23 +1228,23 @@ describe('ChatController', () => {
     await controller.submit('/model')
     expect(controller.getSnapshot().panel?.kind).toBe('models')
     expect(controller.getSnapshot().panel?.rows[0]).toMatchObject({
-      label: 'Claude Opus 4.8',
+      label: 'Current Model',
       badge: { text: 'current', tone: 'success' },
     })
     expect(controller.getSnapshot().panel?.rows[1]).toMatchObject({
-      label: 'Claude Sonnet 5',
+      label: 'Next Model',
     })
     expect(controller.getSnapshot().panel?.rows[1]?.badge).toBeUndefined()
     expect(controller.getSnapshot().panel?.rows[1]?.tone).toBeUndefined()
-    expect(controller.getSnapshot().panel?.body).toBe('Claude Opus 4.8\nglobal.anthropic.claude-opus-4-8')
+    expect(controller.getSnapshot().panel?.body).toBe('bedrock/current-model\nbedrock/current-model')
     const nextIndex = controller.getSnapshot().panel?.rows.findIndex((row) => row.value === nextId) ?? -1
     expect(nextIndex).toBeGreaterThanOrEqual(0)
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[nextIndex]!)
     expect(target.restartModel).toHaveBeenCalledWith(nextId)
     expect(controller.getSnapshot().panel).toMatchObject({
       kind: 'models',
-      body: `Claude Sonnet 5\n${nextId}`,
-      rows: [{ label: 'Claude Opus 4.8' }, { label: 'Claude Sonnet 5', badge: { text: 'current', tone: 'success' } }],
+      body: `${nextId}\n${nextId}`,
+      rows: [{ label: 'Current Model' }, { label: 'Next Model', badge: { text: 'current', tone: 'success' } }],
     })
     expect(controller.getSnapshot().runtime.model).toBe(nextId)
     expect(controller.getSnapshot().context).toEqual({})
@@ -1254,8 +1254,8 @@ describe('ChatController', () => {
     const target = backend()
     target.listModels = () => [
       {
-        id: 'global.anthropic.claude-opus-4-8',
-        name: 'Claude Opus 4.8',
+        id: 'bedrock/current-model',
+        name: 'Current Model',
         description: '',
         active: true,
       },
@@ -1279,9 +1279,9 @@ describe('ChatController', () => {
   it('sets effort from /effort and opens an effort-only panel without an argument', async () => {
     const target = backend()
     let effort = 'high'
-    target.info = () => ({ model: 'global.anthropic.claude-opus-4-8', effort: effort === 'low' ? 'Low' : 'High' })
+    target.info = () => ({ model: 'bedrock/current-model', effort: effort === 'low' ? 'Low' : 'High' })
     target.listModels = vi.fn(() => [
-      { id: 'global.anthropic.claude-opus-4-8', name: 'Claude Opus 4.8', description: '', active: true },
+      { id: 'bedrock/current-model', name: 'Current Model', description: '', active: true },
     ])
     target.listEfforts = () => [
       { id: 'low', label: 'Low', ...(effort === 'low' ? { active: true } : {}) },
@@ -1348,7 +1348,7 @@ describe('ChatController', () => {
 
   it('catches invalid model arguments before backend mode selection can escape the TUI', async () => {
     const target = backend()
-    target.info = () => ({ model: 'ollama/qwen3:8b', effort: 'Auto' })
+    target.info = () => ({ model: 'ollama/test-model', effort: 'Auto' })
     target.modelChangeMode = (model) => {
       resolveModelTarget(model)
       return 'restart'
@@ -1361,7 +1361,7 @@ describe('ChatController', () => {
       kind: 'error',
       rows: [{ description: 'Unsupported model provider "unknown". Use /model to choose a model.' }],
     })
-    expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/qwen3:8b', effort: 'Auto' })
+    expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/test-model', effort: 'Auto' })
     expect(target.restartModel).not.toHaveBeenCalled()
   })
 
@@ -1389,9 +1389,9 @@ describe('ChatController', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const currentId = 'global.anthropic.claude-opus-4-8'
-    const nextId = 'bedrock/anthropic.claude-sonnet-5'
-    const latestId = 'bedrock/anthropic.claude-opus-5'
+    const currentId = 'bedrock/current-model'
+    const nextId = 'bedrock/next-model'
+    const latestId = 'bedrock/latest-model'
     let currentModel = currentId
     const target = backend(async function* () {
       yield { type: 'textDelta', text: 'Working.' }
@@ -1400,9 +1400,9 @@ describe('ChatController', () => {
     })
     target.info = () => ({ model: currentModel })
     target.listModels = () => [
-      { id: currentId, name: 'Claude Opus 4.8', description: 'current', active: true },
-      { id: nextId, name: 'Claude Sonnet 5', description: 'other family' },
-      { id: latestId, name: 'Claude Opus 5', description: 'latest choice' },
+      { id: currentId, name: 'Current Model', description: 'current', active: true },
+      { id: nextId, name: 'Next Model', description: 'other model' },
+      { id: latestId, name: 'Latest Model', description: 'latest choice' },
     ]
     target.modelChangeMode = () => 'restart'
     target.switchModel = vi.fn()
@@ -1429,7 +1429,7 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().notices).toEqual([
       expect.objectContaining({
         status: 'running',
-        text: 'Model change queued for after the current turn: Claude Sonnet 5',
+        text: 'Model change queued for after the current turn: bedrock/next-model',
       }),
     ])
 
@@ -1440,11 +1440,11 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().notices).toEqual([
       expect.objectContaining({
         status: 'delivered',
-        text: 'Model change to Claude Sonnet 5 superseded by Claude Opus 5',
+        text: 'Model change to bedrock/next-model superseded by bedrock/latest-model',
       }),
       expect.objectContaining({
         status: 'running',
-        text: 'Model change queued for after the current turn: Claude Opus 5',
+        text: 'Model change queued for after the current turn: bedrock/latest-model',
       }),
     ])
 
@@ -1456,7 +1456,7 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().runtime.model).toBe(latestId)
     expect(controller.getSnapshot().notices[1]).toMatchObject({
       status: 'delivered',
-      text: 'Model changed to Claude Opus 5',
+      text: 'Model changed to bedrock/latest-model',
     })
   })
 

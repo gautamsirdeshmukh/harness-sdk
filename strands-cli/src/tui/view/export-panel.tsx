@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 
-import { PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
+import { PanelContainer, PanelTitle, type PanelRowsProps } from './panel-components.js'
 import { Box, Text, useTheme } from './theme.js'
 
 export function ExportPanel({
@@ -16,7 +16,7 @@ export function ExportPanel({
 }: PanelRowsProps): ReactElement {
   const { hover, selection, accent, surface, foreground } = useTheme()
   return (
-    <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+    <PanelContainer width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
       <Box paddingX={1} flexDirection="column">
         <PanelTitle title={panel.title} color={accent} />
         {panel.body?.split('\n').map((line, index) => (
@@ -56,6 +56,6 @@ export function ExportPanel({
           })}
         </Box>
       </Box>
-    </PanelOverlay>
+    </PanelContainer>
   )
 }

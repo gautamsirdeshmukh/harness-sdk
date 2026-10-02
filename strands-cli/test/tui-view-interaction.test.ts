@@ -34,8 +34,8 @@ describe('voice input', () => {
 
 describe('panel helpers', () => {
   const rows = [
-    { label: 'Opus', description: 'Anthropic', filter: 'bedrock' },
-    { label: 'GPT', description: 'OpenAI', filter: 'current' },
+    { label: 'Model A', description: 'Provider A', filter: 'bedrock' },
+    { label: 'Model B', description: 'Provider B', filter: 'current' },
   ]
 
   it('tabs between /model sections and leaves search for the model list', () => {
@@ -69,23 +69,23 @@ describe('panel helpers', () => {
   })
 
   it('filters rows and accepts custom IDs for supported providers', () => {
-    expect(filterPanelRows(rows, 'open', 'all')).toEqual([rows[1]])
+    expect(filterPanelRows(rows, 'model b', 'all')).toEqual([rows[1]])
     expect(filterPanelRows(rows, '', 'bedrock')).toEqual([rows[0]])
-    expect(filterPanelRows(rows, 'anthropic.claude-new', 'bedrock', true)).toEqual([
+    expect(filterPanelRows(rows, 'vendor.test-model', 'bedrock', true)).toEqual([
       {
-        label: 'bedrock/anthropic.claude-new',
+        label: 'bedrock/vendor.test-model',
         description: 'Switch to this model ID',
-        value: 'bedrock/anthropic.claude-new',
+        value: 'bedrock/vendor.test-model',
       },
     ])
-    expect(filterPanelRows(rows, 'openai/gpt-new', 'bedrock', true)).toEqual([
+    expect(filterPanelRows(rows, 'openai/test-model', 'bedrock', true)).toEqual([
       {
-        label: 'openai/gpt-new',
+        label: 'openai/test-model',
         description: 'Switch to this model ID',
-        value: 'openai/gpt-new',
+        value: 'openai/test-model',
       },
     ])
-    expect(filterPanelRows(rows, 'unknown/gpt-new', 'bedrock', true)).toEqual([])
+    expect(filterPanelRows(rows, 'unknown/test-model', 'bedrock', true)).toEqual([])
   })
 
   it('parses mouse wheel input', () => {

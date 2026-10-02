@@ -1,6 +1,13 @@
 import type { DOMElement, Key } from 'ink'
 
-import type { ChatControllerApi, ChatPanel, ChatPanelRow, ChatPanelSlider, ChatSnapshot } from '../chat/controller.js'
+import type {
+  ChatControllerApi,
+  ChatModelPanel,
+  ChatPanel,
+  ChatPanelRow,
+  ChatPanelSlider,
+  ChatSnapshot,
+} from '../chat/controller.js'
 import { resolveModelTarget } from '../model/selection.js'
 import { COMPOSER_PANEL_HEIGHT } from '../terminal/composer.js'
 import type { MouseInput } from '../terminal/mouse-input.js'
@@ -267,7 +274,7 @@ export function panelSlider(panel: ChatPanel | undefined): ChatPanelSlider | und
 /** Tab order between the `/model` provider and model sections. */
 export function cycleModelPanelFocus(
   current: ModelPanelFocus,
-  panel: ChatPanel & { kind: 'models' },
+  panel: ChatModelPanel,
   direction: number
 ): ModelPanelFocus {
   const sections: ModelPanelFocus[] = [...(panel.filters?.length ? (['providers'] as const) : []), 'models']

@@ -12,7 +12,7 @@ import {
 } from '../src/tui/chat/types.js'
 import { Markdown } from '../src/tui/view/markdown.js'
 import { MediaView } from '../src/tui/view/media.js'
-import { PanelOverlay } from '../src/tui/view/panel-components.js'
+import { PanelContainer } from '../src/tui/view/panel-components.js'
 import { contextColor, detailLines, permissionLines } from '../src/tui/view/presentation.js'
 import { PromptEditor } from '../src/tui/view/prompt-editor.js'
 import { SettingsControl } from '../src/tui/view/settings-panel.js'
@@ -275,7 +275,7 @@ describe('themed Ink output', () => {
           h(MediaView, {
             content: { type: 'document', name: 'Notes', format: 'txt', source: { type: 'text', text: 'preview' } },
           }),
-          h(PanelOverlay, {
+          h(PanelContainer, {
             width: 40,
             children: h(SettingsControl, {
               rowIndex: 0,

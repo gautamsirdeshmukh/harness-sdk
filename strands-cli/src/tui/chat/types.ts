@@ -373,50 +373,123 @@ export interface ChatPanelSlider {
   disabled?: boolean
 }
 
-export type ChatPanel = {
+export interface ChatPanelBase {
   id: string
   title: string
   rows: readonly ChatPanelRow[]
   searchable?: boolean
   filters?: readonly ChatPanelFilter[]
   body?: string
-} & (
-  | {
-      kind:
-        | 'progress'
-        | 'context'
-        | 'tasks'
-        | 'sessions'
-        | 'skills'
-        | 'mcp'
-        | 'agents'
-        | 'rename'
-        | 'permissions'
-        | 'tools'
-        | 'voice'
-        | 'export'
-        | 'help'
-        | 'error'
-    }
-  | {
-      kind: 'models'
-      /** Models are still being discovered. */
-      loading?: boolean
-    }
-  | { kind: 'effort'; slider: ChatPanelSlider }
-  | { kind: 'permission'; diff?: ChatDiffPreview }
-  | { kind: 'detail'; followTail?: boolean; activity?: BackgroundAgentActivity }
-  | {
-      kind: 'settings'
-      settingsCategory?: SettingsCategory
-      settingsCategories?: readonly { id: SettingsCategory; label: string; description: string }[]
-    }
-)
+}
 
-export type ChatPanelOptions<K extends ChatPanel['kind']> = Omit<
-  ChatPanel & { kind: K },
-  'id' | 'kind' | 'title' | 'rows'
->
+export interface ChatProgressPanel extends ChatPanelBase {
+  kind: 'progress'
+}
+
+export interface ChatContextPanel extends ChatPanelBase {
+  kind: 'context'
+}
+
+export interface ChatTasksPanel extends ChatPanelBase {
+  kind: 'tasks'
+}
+
+export interface ChatSessionsPanel extends ChatPanelBase {
+  kind: 'sessions'
+}
+
+export interface ChatSkillsPanel extends ChatPanelBase {
+  kind: 'skills'
+}
+
+export interface ChatMcpPanel extends ChatPanelBase {
+  kind: 'mcp'
+}
+
+export interface ChatAgentsPanel extends ChatPanelBase {
+  kind: 'agents'
+}
+
+export interface ChatRenamePanel extends ChatPanelBase {
+  kind: 'rename'
+}
+
+export interface ChatPermissionsPanel extends ChatPanelBase {
+  kind: 'permissions'
+}
+
+export interface ChatToolsPanel extends ChatPanelBase {
+  kind: 'tools'
+}
+
+export interface ChatVoicePanel extends ChatPanelBase {
+  kind: 'voice'
+}
+
+export interface ChatExportPanel extends ChatPanelBase {
+  kind: 'export'
+}
+
+export interface ChatHelpPanel extends ChatPanelBase {
+  kind: 'help'
+}
+
+export interface ChatErrorPanel extends ChatPanelBase {
+  kind: 'error'
+}
+
+export interface ChatModelPanel extends ChatPanelBase {
+  kind: 'models'
+  /** Models are still being discovered. */
+  loading?: boolean
+}
+
+export interface ChatEffortPanel extends ChatPanelBase {
+  kind: 'effort'
+  slider: ChatPanelSlider
+}
+
+export interface ChatPermissionPanel extends ChatPanelBase {
+  kind: 'permission'
+  diff?: ChatDiffPreview
+}
+
+export interface ChatDetailPanel extends ChatPanelBase {
+  kind: 'detail'
+  followTail?: boolean
+  activity?: BackgroundAgentActivity
+}
+
+export interface ChatSettingsPanel extends ChatPanelBase {
+  kind: 'settings'
+  settingsCategory?: SettingsCategory
+  settingsCategories?: readonly { id: SettingsCategory; label: string; description: string }[]
+}
+
+export type ChatPanel =
+  | ChatProgressPanel
+  | ChatContextPanel
+  | ChatTasksPanel
+  | ChatSessionsPanel
+  | ChatSkillsPanel
+  | ChatMcpPanel
+  | ChatAgentsPanel
+  | ChatRenamePanel
+  | ChatPermissionsPanel
+  | ChatToolsPanel
+  | ChatVoicePanel
+  | ChatExportPanel
+  | ChatHelpPanel
+  | ChatErrorPanel
+  | ChatModelPanel
+  | ChatEffortPanel
+  | ChatPermissionPanel
+  | ChatDetailPanel
+  | ChatSettingsPanel
+
+type WithoutPanelId<Panel> = Panel extends ChatPanel ? Omit<Panel, 'id'> : never
+
+export type NewChatPanel = WithoutPanelId<ChatPanel>
 
 export interface ChatRuntimeInfo {
   agent: string

@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
-import type { ChatPanel, ChatPanelFilter, ChatPanelRow, ChatPanelSlider } from '../chat/controller.js'
+import type { ChatModelPanel, ChatPanelFilter, ChatPanelRow, ChatPanelSlider } from '../chat/controller.js'
 import type { ModelPanelFocus } from './interaction.js'
 import type { PanelRowsProps } from './panel-components.js'
 import { ProviderList } from './provider-list.js'
@@ -29,7 +29,7 @@ export function ModelPicker({
   onFilterElement,
   onSearchElement,
 }: Omit<PanelRowsProps, 'panel'> & {
-  panel: ChatPanel & { kind: 'models' }
+  panel: ChatModelPanel
   allRows: readonly ChatPanelRow[]
   height: number
   query: string

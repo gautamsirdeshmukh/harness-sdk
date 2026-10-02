@@ -1,7 +1,13 @@
 import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
-import type { ChatContextUsage, ChatPanel, ChatPanelRow, ChatSettings } from '../chat/controller.js'
+import type {
+  ChatContextUsage,
+  ChatPanel,
+  ChatPanelRow,
+  ChatPermissionPanel,
+  ChatSettings,
+} from '../chat/controller.js'
 import { COMPOSER_PANEL_HEIGHT } from '../terminal/composer.js'
 import {
   agentGridCapacity,
@@ -25,7 +31,7 @@ import { ExportPanel } from './export-panel.js'
 import { ModelPicker } from './model-panel.js'
 import { RenamePanel } from './rename-panel.js'
 import { SessionsPanel } from './sessions-panel.js'
-import { PanelFrame, PanelItemHeader, PanelOverlay, PanelTitle } from './panel-components.js'
+import { PanelContainer, PanelItemHeader, PanelTitle } from './panel-components.js'
 import { SettingsControl, SettingsPanel } from './settings-panel.js'
 import { BlinkingCursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
@@ -138,9 +144,9 @@ export function ResourcePanel({
     const lines = wrapLines(message, Math.max(1, width - 4))
     const height = Math.min(lines.length + 4, MAX_COMPACT_ERROR_PANEL_HEIGHT, Math.max(1, terminalHeight - 2))
     return (
-      <PanelOverlay width={width} height={height} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+      <PanelContainer width={width} height={height} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
         <Text color="red">{lines.join('\n')}</Text>
-      </PanelOverlay>
+      </PanelContainer>
     )
   }
 
@@ -151,7 +157,7 @@ export function ResourcePanel({
     const boundedScroll = Math.max(0, Math.min(detailScroll, maximum))
     const start = panel.followTail ? maximum - boundedScroll : boundedScroll
     return (
-      <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+      <PanelContainer width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
         <Box flexDirection="column" overflow="hidden">
           <PanelTitle title={panel.title} color={color} />
           {panel.rows.map((row, index) => (
@@ -182,7 +188,7 @@ export function ResourcePanel({
             </Text>
           ) : null}
         </Box>
-      </PanelOverlay>
+      </PanelContainer>
     )
   }
 
@@ -220,7 +226,13 @@ export function ResourcePanel({
   if (panel.kind === 'models') {
     const height = composer?.height ?? COMPOSER_PANEL_HEIGHT
     return (
-      <PanelFrame width={width} height={height} paddingX={0} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+      <PanelContainer
+        width={width}
+        height={height}
+        inline
+        paddingX={0}
+        {...(onPanelElement ? { onElement: onPanelElement } : {})}
+      >
         <ModelPicker
           {...rowProps}
           panel={panel}
@@ -237,13 +249,13 @@ export function ResourcePanel({
           {...(onFilterElement ? { onFilterElement } : {})}
           {...(onSearchElement ? { onSearchElement } : {})}
         />
-      </PanelFrame>
+      </PanelContainer>
     )
   }
   if (panel.kind === 'context') {
     const used = context.projectedTokens ?? context.currentTokens
     return (
-      <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+      <PanelContainer width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
         <Box flexDirection="column" overflow="hidden">
           <Box justifyContent="space-between">
             <Text bold color={accent} wrap="truncate-end">
@@ -281,7 +293,7 @@ export function ResourcePanel({
             ))}
           </Box>
         </Box>
-      </PanelOverlay>
+      </PanelContainer>
     )
   }
   if (panel.kind === 'settings' || panel.kind === 'voice') {
@@ -323,7 +335,7 @@ export function ResourcePanel({
   }
 
   return (
-    <PanelOverlay
+    <PanelContainer
       width={width}
       {...(errorHeight === undefined ? {} : { height: errorHeight })}
       {...(onPanelElement ? { onElement: onPanelElement } : {})}
@@ -496,7 +508,7 @@ export function ResourcePanel({
           </Box>
         ) : null}
       </Box>
-    </PanelOverlay>
+    </PanelContainer>
   )
 }
 
@@ -506,7 +518,7 @@ function PermissionPreview({
   terminalHeight,
   scroll,
 }: {
-  panel: ChatPanel & { kind: 'permission' }
+  panel: ChatPermissionPanel
   width: number
   terminalHeight: number
   scroll: number

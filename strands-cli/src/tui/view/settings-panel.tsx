@@ -5,7 +5,7 @@ import type { ChatPanelRow } from '../chat/controller.js'
 import type { ChatSettings, FrogTheme } from '../chat/types.js'
 import { DEFAULT_CHAT_SETTINGS } from '../settings.js'
 import { panelControlTarget, settingsLayout, settingsThemeLayout } from './interaction.js'
-import { PanelItemHeader, PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
+import { PanelContainer, PanelItemHeader, PanelTitle, type PanelRowsProps } from './panel-components.js'
 import { Box, getTheme, Text, useTheme, type Theme } from './theme.js'
 
 export function SettingsPanel({
@@ -237,9 +237,9 @@ export function SettingsPanel({
   return embedded ? (
     content
   ) : (
-    <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+    <PanelContainer width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
       {content}
-    </PanelOverlay>
+    </PanelContainer>
   )
 }
 

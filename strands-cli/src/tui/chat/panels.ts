@@ -14,8 +14,8 @@ import {
   type ChatEffortOption,
   type ChatModelOption,
   type ChatPanel,
+  type ChatPanelBase,
   type ChatPanelFilter,
-  type ChatPanelOptions,
   type ChatPanelRow,
   type ChatPanelSlider,
   type ChatPermissionRequest,
@@ -23,6 +23,7 @@ import {
   type ChatRuntimeInfo,
   type ChatSettings,
   type ChatTask,
+  type NewChatPanel,
   type SettingsCategory,
 } from './types.js'
 import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription } from '../settings.js'
@@ -111,18 +112,8 @@ export function formatTaskActivity(task: ChatTask): string {
 }
 
 export function clonePanel(panel: ChatPanel): ChatPanel {
-  return {
-    ...sanitizePanelExtensions(panel),
-    rows: panel.rows.map((row) => ({
-      ...row,
-      ...(row.control?.kind === 'toggle'
-        ? { control: { ...row.control } }
-        : row.control?.kind === 'segmented'
-          ? { control: { ...row.control, options: row.control.options.map((option) => ({ ...option })) } }
-          : {}),
-    })),
-    ...(panel.filters ? { filters: panel.filters.map((filter) => ({ ...filter })) } : {}),
-  }
+  const { id, ...panelWithoutId } = panel
+  return makePanel(id, panelWithoutId)
 }
 
 function formatDate(value: string): string {
@@ -233,19 +224,12 @@ export function sanitizeRows(rows: ChatPanel['rows']): ChatPanelRow[] {
   }))
 }
 
-export function makePanel<K extends ChatPanel['kind']>(
-  id: string,
-  kind: K,
-  title: string,
-  rows: ChatPanel['rows'],
-  options: ChatPanelOptions<K>
-): ChatPanel {
-  // ChatPanelOptions<K> plus the header fields it omits is exactly the panel of kind K.
-  const panel = { ...options, id, kind, title, rows } as ChatPanel
-  return {
-    ...sanitizePanelExtensions(panel),
-    title: sanitizeTerminalText(title),
-    rows: sanitizeRows(rows),
+export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
+  const common = {
+    ...panel,
+    id,
+    title: sanitizeTerminalText(panel.title),
+    rows: sanitizeRows(panel.rows),
     ...(panel.filters
       ? {
           filters: panel.filters.map((filter) => ({
@@ -256,28 +240,31 @@ export function makePanel<K extends ChatPanel['kind']>(
       : {}),
     ...(panel.body !== undefined ? { body: sanitizeTerminalText(panel.body) } : {}),
   }
-}
-
-/** Returns fresh, sanitized copies of the fields only some panel kinds carry. */
-function sanitizePanelExtensions(panel: ChatPanel): ChatPanel {
   switch (panel.kind) {
     case 'effort':
-      return { ...panel, slider: sanitizeSlider(panel.slider) }
+      return { ...common, kind: panel.kind, slider: sanitizeSlider(panel.slider) }
     case 'permission':
-      return panel.diff ? { ...panel, diff: sanitizeDiffPreview(panel.diff) } : panel
+      return {
+        ...common,
+        kind: panel.kind,
+        ...(panel.diff ? { diff: sanitizeDiffPreview(panel.diff) } : {}),
+      }
     case 'settings':
-      return panel.settingsCategories
-        ? {
-            ...panel,
-            settingsCategories: panel.settingsCategories.map(({ id: categoryId, label, description }) => ({
-              id: categoryId,
-              label: sanitizeTerminalText(label),
-              description: sanitizeTerminalText(description),
-            })),
-          }
-        : panel
+      return {
+        ...common,
+        kind: panel.kind,
+        ...(panel.settingsCategories
+          ? {
+              settingsCategories: panel.settingsCategories.map(({ id: categoryId, label, description }) => ({
+                id: categoryId,
+                label: sanitizeTerminalText(label),
+                description: sanitizeTerminalText(description),
+              })),
+            }
+          : {}),
+      }
     default:
-      return panel
+      return { ...common, kind: panel.kind }
   }
 }
 
@@ -453,7 +440,7 @@ export function mcpOptions(
   servers: Awaited<ReturnType<LoadedMcp['list']>>,
   paths: readonly string[],
   messages: readonly string[]
-): Pick<ChatPanel, 'body' | 'searchable'> {
+): Pick<ChatPanelBase, 'body' | 'searchable'> {
   const checkedPaths = paths.join(', ') || 'the configured paths'
   const warnings = messages.map((warning) => `Skipped: ${warning}`)
   return servers.length === 0

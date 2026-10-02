@@ -59,58 +59,40 @@ export function PanelTitle({ title, color }: { title: string; color: string }): 
   )
 }
 
-export function PanelOverlay({
+export function PanelContainer({
   width,
   height,
-  children,
-  onElement,
-}: {
-  width: number
-  height?: number
-  children: ReactNode
-  onElement?: (element: DOMElement | null) => void
-}): ReactElement {
-  const theme = useTheme()
-  return (
-    <Box position="absolute" width="100%" height="100%" alignItems="center" justifyContent="center" padding={1}>
-      <PanelFrame
-        width={width}
-        backgroundColor={theme.panel}
-        {...(height === undefined ? {} : { height })}
-        {...(onElement ? { onElement } : {})}
-      >
-        {children}
-      </PanelFrame>
-    </Box>
-  )
-}
-
-export function PanelFrame({
-  width,
-  height,
-  backgroundColor,
+  inline = false,
   paddingX = 1,
   children,
   onElement,
 }: {
   width: number
   height?: number
-  backgroundColor?: string
+  inline?: boolean
   paddingX?: number
   children: ReactNode
   onElement?: (element: DOMElement | null) => void
 }): ReactElement {
-  return (
+  const theme = useTheme()
+  const frame = (
     <Box
       ref={onElement}
       width={width}
       {...(height === undefined ? {} : { height, overflow: 'hidden' })}
       flexDirection="column"
       paddingX={paddingX}
-      {...(backgroundColor ? { backgroundColor } : {})}
+      {...(inline ? {} : { backgroundColor: theme.panel })}
     >
       {children}
       <PanelHelpFooter width={Math.max(1, width - paddingX * 2)} />
+    </Box>
+  )
+  return inline ? (
+    frame
+  ) : (
+    <Box position="absolute" width="100%" height="100%" alignItems="center" justifyContent="center" padding={1}>
+      {frame}
     </Box>
   )
 }
